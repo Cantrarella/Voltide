@@ -25,7 +25,7 @@ namespace Voltide.UI
         private static extern IntPtr CreateIconIndirect(ref IconInfo icon);
 
         [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfo bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+        private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapV5Header bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
 
         [DllImport("gdi32.dll")]
         private static extern IntPtr CreateBitmap(int width, int height, uint planes, uint bitCount, byte[] bits);
@@ -52,38 +52,64 @@ namespace Voltide.UI
             public IntPtr hbmColor;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct BitmapInfo
+        // BITMAPV5HEADER. biSize 124 is what tells GDI the alpha mask is real.
+        // A 40-byte BITMAPINFOHEADER leaves the fourth byte unused, and any
+        // 1-bit in the AND mask then makes Windows ignore alpha and paint the
+        // premultiplied RGB opaquely. Rounded-corner coverage pixels are light
+        // glass at partial alpha, so that paint is a dark frame on the corners
+        // only — the straight sides are fully opaque and stay the glass colour.
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct BitmapV5Header
         {
-            public int biSize;
-            public int biWidth;
-            public int biHeight;
-            public short biPlanes;
-            public short biBitCount;
-            public int biCompression;
-            public int biSizeImage;
-            public int biXPelsPerMeter;
-            public int biYPelsPerMeter;
-            public int biClrUsed;
-            public int biClrImportant;
+            public int bV5Size;
+            public int bV5Width;
+            public int bV5Height;
+            public short bV5Planes;
+            public short bV5BitCount;
+            public int bV5Compression;
+            public int bV5SizeImage;
+            public int bV5XPelsPerMeter;
+            public int bV5YPelsPerMeter;
+            public int bV5ClrUsed;
+            public int bV5ClrImportant;
+            public uint bV5RedMask;
+            public uint bV5GreenMask;
+            public uint bV5BlueMask;
+            public uint bV5AlphaMask;
+            public uint bV5CSType;
+            public int e0, e1, e2, e3, e4, e5, e6, e7, e8;
+            public uint bV5GammaRed;
+            public uint bV5GammaGreen;
+            public uint bV5GammaBlue;
+            public uint bV5Intent;
+            public uint bV5ProfileData;
+            public uint bV5ProfileSize;
+            public uint bV5Reserved;
         }
 
         /// <summary>
         /// HICON with a real alpha channel. Bitmap.GetHicon drops it, so the
         /// rounded corners come out opaque black on the tray and the window.
+        /// The mask stays all zeros: KB Q318876. A set mask bit switches the
+        /// icon back to the classic AND/XOR blit and the corner fringe goes dark.
         /// </summary>
         private static Icon BitmapToIcon(Bitmap source)
         {
             int w = source.Width;
             int h = source.Height;
 
-            BitmapInfo bmi = new BitmapInfo();
-            bmi.biSize = 40;
-            bmi.biWidth = w;
-            bmi.biHeight = -h;          // top-down
-            bmi.biPlanes = 1;
-            bmi.biBitCount = 32;
-            bmi.biCompression = 0;
+            BitmapV5Header bmi = new BitmapV5Header();
+            bmi.bV5Size = Marshal.SizeOf(typeof(BitmapV5Header));
+            bmi.bV5Width = w;
+            bmi.bV5Height = -h;          // top-down
+            bmi.bV5Planes = 1;
+            bmi.bV5BitCount = 32;
+            bmi.bV5Compression = 3;      // BI_BITFIELDS
+            bmi.bV5RedMask = 0x00FF0000;
+            bmi.bV5GreenMask = 0x0000FF00;
+            bmi.bV5BlueMask = 0x000000FF;
+            bmi.bV5AlphaMask = 0xFF000000;
+            bmi.bV5CSType = 0x57696E20;  // LCS_WINDOWS_COLOR_SPACE 'Win '
 
             IntPtr hdc = GetDC(IntPtr.Zero);
             IntPtr bits;
@@ -101,9 +127,6 @@ namespace Voltide.UI
 
             int dibStride = w * 4;
             byte[] dib = new byte[dibStride * h];
-            // CreateBitmap wants word-aligned rows.
-            int maskStride = ((w + 15) / 16) * 2;
-            byte[] mask = new byte[maskStride * h];
 
             for (int y = 0; y < h; y++)
             {
@@ -115,17 +138,15 @@ namespace Voltide.UI
                     byte g = raw[s + 1];
                     byte r = raw[s + 2];
                     byte a = raw[s + 3];
-                    if (!premul && a < 255)
+                    if (a == 0)
+                    {
+                        b = g = r = 0;
+                    }
+                    else if (!premul && a < 255)
                     {
                         b = (byte)(b * a / 255);
                         g = (byte)(g * a / 255);
                         r = (byte)(r * a / 255);
-                    }
-                    if (a == 0)
-                    {
-                        b = g = r = 0;
-                        int mb = y * maskStride + (x >> 3);
-                        mask[mb] |= (byte)(0x80 >> (x & 7));
                     }
                     dib[d] = b;
                     dib[d + 1] = g;
@@ -135,7 +156,8 @@ namespace Voltide.UI
             }
 
             Marshal.Copy(dib, 0, bits, dib.Length);
-            IntPtr hMask = CreateBitmap(w, h, 1, 1, mask);
+            // Empty mask. Bits are left null so every mask pixel stays 0.
+            IntPtr hMask = CreateBitmap(w, h, 1, 1, null);
 
             IconInfo ii = new IconInfo();
             ii.fIcon = true;
