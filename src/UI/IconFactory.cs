@@ -22,7 +22,133 @@ namespace Voltide.UI
         private static extern bool DestroyIcon(IntPtr hIcon);
 
         [DllImport("user32.dll")]
+        private static extern IntPtr CreateIconIndirect(ref IconInfo icon);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfo bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateBitmap(int width, int height, uint planes, uint bitCount, byte[] bits);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr obj);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+        [DllImport("user32.dll")]
         private static extern int GetSystemMetrics(int nIndex);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IconInfo
+        {
+            public bool fIcon;
+            public int xHotspot;
+            public int yHotspot;
+            public IntPtr hbmMask;
+            public IntPtr hbmColor;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BitmapInfo
+        {
+            public int biSize;
+            public int biWidth;
+            public int biHeight;
+            public short biPlanes;
+            public short biBitCount;
+            public int biCompression;
+            public int biSizeImage;
+            public int biXPelsPerMeter;
+            public int biYPelsPerMeter;
+            public int biClrUsed;
+            public int biClrImportant;
+        }
+
+        /// <summary>
+        /// HICON with a real alpha channel. Bitmap.GetHicon drops it, so the
+        /// rounded corners come out opaque black on the tray and the window.
+        /// </summary>
+        private static Icon BitmapToIcon(Bitmap source)
+        {
+            int w = source.Width;
+            int h = source.Height;
+
+            BitmapInfo bmi = new BitmapInfo();
+            bmi.biSize = 40;
+            bmi.biWidth = w;
+            bmi.biHeight = -h;          // top-down
+            bmi.biPlanes = 1;
+            bmi.biBitCount = 32;
+            bmi.biCompression = 0;
+
+            IntPtr hdc = GetDC(IntPtr.Zero);
+            IntPtr bits;
+            IntPtr hColor = CreateDIBSection(hdc, ref bmi, 0, out bits, IntPtr.Zero, 0);
+            ReleaseDC(IntPtr.Zero, hdc);
+            if (hColor == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+
+            bool premul = source.PixelFormat == PixelFormat.Format32bppPArgb;
+            BitmapData src = source.LockBits(
+                new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, source.PixelFormat);
+            int srcStride = src.Stride;
+            byte[] raw = new byte[srcStride * h];
+            Marshal.Copy(src.Scan0, raw, 0, raw.Length);
+            source.UnlockBits(src);
+
+            int dibStride = w * 4;
+            byte[] dib = new byte[dibStride * h];
+            // CreateBitmap wants word-aligned rows.
+            int maskStride = ((w + 15) / 16) * 2;
+            byte[] mask = new byte[maskStride * h];
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int s = y * srcStride + x * 4;
+                    int d = y * dibStride + x * 4;
+                    byte b = raw[s];
+                    byte g = raw[s + 1];
+                    byte r = raw[s + 2];
+                    byte a = raw[s + 3];
+                    if (!premul && a < 255)
+                    {
+                        b = (byte)(b * a / 255);
+                        g = (byte)(g * a / 255);
+                        r = (byte)(r * a / 255);
+                    }
+                    if (a == 0)
+                    {
+                        b = g = r = 0;
+                        int mb = y * maskStride + (x >> 3);
+                        mask[mb] |= (byte)(0x80 >> (x & 7));
+                    }
+                    dib[d] = b;
+                    dib[d + 1] = g;
+                    dib[d + 2] = r;
+                    dib[d + 3] = a;
+                }
+            }
+
+            Marshal.Copy(dib, 0, bits, dib.Length);
+            IntPtr hMask = CreateBitmap(w, h, 1, 1, mask);
+
+            IconInfo ii = new IconInfo();
+            ii.fIcon = true;
+            ii.hbmColor = hColor;
+            ii.hbmMask = hMask;
+            IntPtr hIcon = CreateIconIndirect(ref ii);
+
+            Icon icon = (Icon)Icon.FromHandle(hIcon).Clone();
+            DestroyIcon(hIcon);
+            DeleteObject(hColor);
+            DeleteObject(hMask);
+            return icon;
+        }
 
         private const int SM_CXICON = 11;      // large icon, caption / Alt-Tab
         private const int SM_CXSMICON = 49;    // small icon, tray / title bar
@@ -87,10 +213,7 @@ namespace Voltide.UI
         {
             using (Bitmap bmp = RenderBattery(percent, size))
             {
-                IntPtr handle = bmp.GetHicon();
-                Icon icon = (Icon)Icon.FromHandle(handle).Clone();
-                DestroyIcon(handle);
-                return icon;
+                return BitmapToIcon(bmp);
             }
         }
 
@@ -210,10 +333,7 @@ namespace Voltide.UI
         {
             using (Bitmap bmp = RenderLightning(size))
             {
-                IntPtr handle = bmp.GetHicon();
-                Icon icon = (Icon)Icon.FromHandle(handle).Clone();
-                DestroyIcon(handle);
-                return icon;
+                return BitmapToIcon(bmp);
             }
         }
 
@@ -304,29 +424,28 @@ namespace Voltide.UI
 
         // --------------------------------------------------------------- app icon
         //
-        // Rounded squircle, diagonal lime (#D8F59A, top-left) to mint (#4FD8C8,
-        // bottom-right), white geometric bolt centred. No frame, no shadow. This is
-        // the exe / taskbar / Alt-Tab icon, and the tray glyph when the lowest
-        // online device is at 100%.
+        // Frosted-glass squircle: near-white, faint mint-to-blue vertical gradient,
+        // thin bright inner rim. A thick lightning bolt with round caps and joins
+        // sits on top, mint (#7EE8B0) at the top-left to cyan (#7CC8F8) at the
+        // bottom-right. No drop shadow — pixels outside the squircle stay alpha 0.
+        // This is the exe / taskbar / Alt-Tab icon, and the tray glyph at 100%.
 
-        private static readonly Color AppLime = Color.FromArgb(255, 0xD8, 0xF5, 0x9A);
-        private static readonly Color AppMint = Color.FromArgb(255, 0x4F, 0xD8, 0xC8);
+        private static readonly Color BoltMint = Color.FromArgb(255, 0x7E, 0xE8, 0xB0);
+        private static readonly Color BoltCyan = Color.FromArgb(255, 0x7C, 0xC8, 0xF8);
+        // Deeper ends used only at tray sizes, where the spec colours wash out.
+        private static readonly Color BoltMintDeep = Color.FromArgb(255, 0x1F, 0xC4, 0x84);
+        private static readonly Color BoltCyanDeep = Color.FromArgb(255, 0x1E, 0x96, 0xEE);
 
-        // Corner radius / side. The reference has long flat edges and a circular
-        // corner of about this size (an iOS-style rounded square, not a pure
-        // superellipse).
-        private const float AppCornerRatio = 0.22f;
+        private const float AppCornerRatio = 0.23f;
 
-        // Bolt in icon space (0..1), clockwise from the top tip. Traced from the
-        // reference so the slash, the notch and the two tips land in the same place.
-        private static readonly PointF[] AppBoltUnit = new PointF[]
+        // Spine of the bolt in icon space. Round caps extend past these points,
+        // so the tips land inside the glass rather than on the rim.
+        private static readonly PointF[] BoltSpine = new PointF[]
         {
-            new PointF(0.623f, 0.187f),
-            new PointF(0.543f, 0.440f),
-            new PointF(0.723f, 0.441f),
-            new PointF(0.381f, 0.801f),
-            new PointF(0.464f, 0.550f),
-            new PointF(0.279f, 0.549f)
+            new PointF(0.585f, 0.21f),
+            new PointF(0.340f, 0.50f),
+            new PointF(0.730f, 0.47f),
+            new PointF(0.420f, 0.78f)
         };
 
         /// <summary>
@@ -357,24 +476,208 @@ namespace Voltide.UI
             if (size < 1) size = 1;
             using (Bitmap bmp = RenderAppIcon(size))
             {
-                IntPtr handle = bmp.GetHicon();
-                Icon icon = (Icon)Icon.FromHandle(handle).Clone();
-                DestroyIcon(handle);
-                return icon;
+                return BitmapToIcon(bmp);
             }
         }
 
         /// <summary>
-        /// App icon bitmap. Anti-aliased, and the bolt vertices are snapped to the
-        /// half-pixel grid so the slanted edges don't shimmer between sizes.
-        /// At 16 and 24 px (and 20, which is the 125% tray size) the bolt is scaled
-        /// up a little; below that the waist drops under two pixels and disappears.
+        /// App icon bitmap, drawn at <paramref name="size"/> (never a downscale).
+        /// The glass and its alpha are written from the rounded-rect distance, so
+        /// every sample that falls outside the squircle is RGBA 0 — including the
+        /// four corners. The bolt is a round-capped stroke, so the tips stay soft.
         /// </summary>
         public static Bitmap RenderAppIcon(int size)
         {
             if (size < 1) size = 1;
 
             Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            PaintGlass(bmp, size);
+            PaintBolt(bmp, size);
+            // The stroke is anti-aliased and can leave a faint fringe past the
+            // rim. Anything geometrically outside the squircle is cleared again.
+            ClearOutsideSquircle(bmp, size * AppCornerRatio);
+            return bmp;
+        }
+
+        private static bool SmallIcon(int size)
+        {
+            return size <= 32;
+        }
+
+        private static float BoltGrow(int size)
+        {
+            // Wider span at tray sizes, but not so wide the arms collide.
+            if (size <= 16) return 1.06f;
+            if (size <= 24) return 1.04f;
+            if (size <= 32) return 1.02f;
+            return 1f;
+        }
+
+        private static float BoltThickness(int size)
+        {
+            // Thick enough to read, thin enough that the notch stays open.
+            if (size <= 16) return size * 0.20f;
+            if (size <= 20) return size * 0.195f;
+            if (size <= 24) return size * 0.19f;
+            if (size <= 32) return size * 0.185f;
+            return size * 0.175f;
+        }
+
+        private static Color LerpColor(Color a, Color b, float t)
+        {
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+            return Color.FromArgb(
+                255,
+                (int)(a.R + (b.R - a.R) * t),
+                (int)(a.G + (b.G - a.G) * t),
+                (int)(a.B + (b.B - a.B) * t));
+        }
+
+        private static Color BoltColorMint(int size)
+        {
+            if (!SmallIcon(size)) return BoltMint;
+            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
+            return LerpColor(BoltMint, BoltMintDeep, t);
+        }
+
+        private static Color BoltColorCyan(int size)
+        {
+            if (!SmallIcon(size)) return BoltCyan;
+            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
+            return LerpColor(BoltCyan, BoltCyanDeep, t);
+        }
+
+        /// <summary>Signed distance to the rounded square. Negative is inside.</summary>
+        private static float RoundRectDistance(float px, float py, float size, float radius)
+        {
+            float half = size * 0.5f;
+            float cx = px - half;
+            float cy = py - half;
+            float qx = Math.Abs(cx) - (half - radius);
+            float qy = Math.Abs(cy) - (half - radius);
+            float ox = qx > 0f ? qx : 0f;
+            float oy = qy > 0f ? qy : 0f;
+            float outside = (float)Math.Sqrt(ox * ox + oy * oy);
+            float inner = Math.Max(qx, qy);
+            if (inner > 0f) inner = 0f;
+            return outside + inner - radius;
+        }
+
+        private static void PaintGlass(Bitmap bmp, int size)
+        {
+            float radius = size * AppCornerRatio;
+            if (radius < 1f) radius = 1f;
+            if (radius > size * 0.5f) radius = size * 0.5f;
+
+            bool small = SmallIcon(size);
+            int baseA = small ? 248 : 230;
+            Color top = small
+                ? Color.FromArgb(baseA, 206, 242, 226)
+                : Color.FromArgb(baseA, 246, 252, 249);
+            Color bot = small
+                ? Color.FromArgb(baseA, 188, 216, 244)
+                : Color.FromArgb(baseA, 226, 238, 250);
+            float rim = small ? Math.Max(1.25f, size * 0.09f) : Math.Max(1.25f, size * 0.028f);
+            float rimStrength = small ? 0.95f : 0.88f;
+            float sheen = small ? 0.20f : 0.12f;
+
+            BitmapData data = bmp.LockBits(
+                new Rectangle(0, 0, size, size),
+                ImageLockMode.WriteOnly,
+                PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = data.Stride;
+                byte[] buf = new byte[stride * size];
+                const int N = 4;
+                int samples = N * N;
+
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        int hit = 0;
+                        for (int sy = 0; sy < N; sy++)
+                        {
+                            float py = y + (sy + 0.5f) / N;
+                            for (int sx = 0; sx < N; sx++)
+                            {
+                                float px = x + (sx + 0.5f) / N;
+                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
+                            }
+                        }
+
+                        int i = y * stride + x * 4;
+                        if (hit == 0)
+                        {
+                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+                            continue;
+                        }
+
+                        float cov = hit / (float)samples;
+                        float v = (y + 0.5f) / size;
+                        int r = (int)(top.R + (bot.R - top.R) * v);
+                        int g = (int)(top.G + (bot.G - top.G) * v);
+                        int b = (int)(top.B + (bot.B - top.B) * v);
+
+                        if (v < 0.42f)
+                        {
+                            float u = (1f - v / 0.42f) * sheen;
+                            r = (int)(r + (255 - r) * u);
+                            g = (int)(g + (255 - g) * u);
+                            b = (int)(b + (255 - b) * u);
+                        }
+
+                        float sd = RoundRectDistance(x + 0.5f, y + 0.5f, size, radius);
+                        float distIn = -sd;
+                        if (distIn >= 0f && distIn < rim)
+                        {
+                            float u = 1f - distIn / rim;
+                            u = u * u * rimStrength;
+                            r = (int)(r + (255 - r) * u);
+                            g = (int)(g + (255 - g) * u);
+                            b = (int)(b + (255 - b) * u);
+                        }
+
+                        int a = (int)(baseA * cov + 0.5f);
+                        if (a < 1)
+                        {
+                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+                            continue;
+                        }
+                        if (a > 255) a = 255;
+                        if (r < 0) r = 0; if (r > 255) r = 255;
+                        if (g < 0) g = 0; if (g > 255) g = 255;
+                        if (b < 0) b = 0; if (b > 255) b = 255;
+                        buf[i] = (byte)b;
+                        buf[i + 1] = (byte)g;
+                        buf[i + 2] = (byte)r;
+                        buf[i + 3] = (byte)a;
+                    }
+                }
+
+                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+
+        private static void PaintBolt(Bitmap bmp, int size)
+        {
+            float grow = BoltGrow(size);
+            float thick = BoltThickness(size);
+            if (thick < 1.6f) thick = 1.6f;
+
+            PointF[] pts = new PointF[BoltSpine.Length];
+            for (int i = 0; i < BoltSpine.Length; i++)
+            {
+                float x = 0.5f + (BoltSpine[i].X - 0.5f) * grow;
+                float y = 0.5f + (BoltSpine[i].Y - 0.5f) * grow;
+                pts[i] = new PointF(x * size, y * size);
+            }
 
             using (Graphics g = Graphics.FromImage(bmp))
             {
@@ -382,66 +685,33 @@ namespace Voltide.UI
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 g.CompositingQuality = CompositingQuality.HighQuality;
+                g.CompositingMode = CompositingMode.SourceOver;
 
-                // Opaque gradient first. The squircle alpha is applied afterwards
-                // from the corner geometry, so the silhouette does not depend on
-                // how GDI+ rasterises a path (libgdiplus and Windows disagree, and
-                // both bias the bottom-right corner).
-                using (LinearGradientBrush grad = new LinearGradientBrush(
-                    new RectangleF(-1f, -1f, size + 2f, size + 2f),
-                    AppLime, AppMint, LinearGradientMode.ForwardDiagonal))
+                // Brush larger than the stroke so the end colour is not wrapped
+                // back onto the first pixel. Gamma off: Windows and libgdiplus match.
+                using (LinearGradientBrush brush = new LinearGradientBrush(
+                    new RectangleF(size * 0.12f, size * 0.06f, size * 0.76f, size * 0.88f),
+                    BoltColorMint(size), BoltColorCyan(size),
+                    LinearGradientMode.ForwardDiagonal))
+                using (Pen pen = new Pen(brush, thick))
                 {
-                    // Brush is larger than the plate so the end colour is not
-                    // wrapped back onto the first pixel. Gamma off: Windows GDI+
-                    // and libgdiplus then both blend in sRGB, matching the art.
-                    grad.GammaCorrection = false;
-                    g.FillRectangle(grad, -1, -1, size + 2, size + 2);
-                }
-
-                float k = BoltScaleFor(size);
-                PointF[] pts = new PointF[AppBoltUnit.Length];
-                for (int i = 0; i < AppBoltUnit.Length; i++)
-                {
-                    float x = 0.5f + (AppBoltUnit[i].X - 0.5f) * k;
-                    float y = 0.5f + (AppBoltUnit[i].Y - 0.5f) * k;
-                    pts[i] = new PointF(Snap(x * size), Snap(y * size));
-                }
-
-                using (GraphicsPath bolt = new GraphicsPath())
-                using (SolidBrush white = new SolidBrush(Color.White))
-                {
-                    bolt.AddPolygon(pts);
-                    g.FillPath(white, bolt);
+                    brush.GammaCorrection = false;
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, pts);
                 }
             }
-
-            ApplySquircleAlpha(bmp, size * AppCornerRatio);
-            return bmp;
-        }
-
-        /// <summary>Slightly bolder bolt at the sizes where a 1 px waist vanishes.</summary>
-        private static float BoltScaleFor(int size)
-        {
-            if (size <= 16) return 1.16f;
-            if (size <= 24) return 1.08f;
-            return 1f;
-        }
-
-        /// <summary>Snap to the half-pixel grid so anti-aliased edges stay symmetric.</summary>
-        private static float Snap(float value)
-        {
-            return (float)(Math.Round(value * 2.0) / 2.0);
         }
 
         /// <summary>
-        /// Writes the squircle into the alpha channel. 4×4 coverage samples, so the
-        /// four corners match and a 16 px icon still has a real radius.
+        /// Forces every sample outside the squircle to transparent black.
+        /// Partial edge pixels keep their coverage; the four corners do not.
         /// </summary>
-        private static void ApplySquircleAlpha(Bitmap bmp, float radius)
+        private static void ClearOutsideSquircle(Bitmap bmp, float radius)
         {
             int size = bmp.Width;
-            if (radius < 0.5f) radius = 0.5f;
-            if (radius > size / 2f) radius = size / 2f;
+            if (radius < 1f) radius = 1f;
 
             BitmapData data = bmp.LockBits(
                 new Rectangle(0, 0, size, size),
@@ -462,15 +732,31 @@ namespace Voltide.UI
                         int hit = 0;
                         for (int sy = 0; sy < N; sy++)
                         {
+                            float py = y + (sy + 0.5f) / N;
                             for (int sx = 0; sx < N; sx++)
                             {
                                 float px = x + (sx + 0.5f) / N;
-                                float py = y + (sy + 0.5f) / N;
-                                if (InsideRoundRect(px, py, size, radius)) hit++;
+                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
                             }
                         }
 
-                        buf[y * stride + x * 4 + 3] = (byte)(hit * 255 / samples);
+                        int i = y * stride + x * 4;
+                        if (hit == 0)
+                        {
+                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+                            continue;
+                        }
+                        if (hit == samples) continue;
+
+                        int a = buf[i + 3] * hit / samples;
+                        if (a < 1)
+                        {
+                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+                        }
+                        else
+                        {
+                            buf[i + 3] = (byte)a;
+                        }
                     }
                 }
 
@@ -480,17 +766,6 @@ namespace Voltide.UI
             {
                 bmp.UnlockBits(data);
             }
-        }
-
-        /// <summary>Point-in-rounded-rect. The plate is the canvas, radius from the corner.</summary>
-        private static bool InsideRoundRect(float px, float py, float size, float radius)
-        {
-            float dx = px < radius ? radius - px : (px > size - radius ? px - (size - radius) : 0f);
-            float dy = py < radius ? radius - py : (py > size - radius ? py - (size - radius) : 0f);
-            if (dx == 0f && dy == 0f) return true;
-            if (dx == 0f) return py >= 0f && py <= size;
-            if (dy == 0f) return px >= 0f && px <= size;
-            return dx * dx + dy * dy <= radius * radius;
         }
 
         /// <summary>
