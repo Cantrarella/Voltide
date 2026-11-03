@@ -117,7 +117,6 @@ namespace Voltide.UI
             ReleaseDC(IntPtr.Zero, hdc);
             if (hColor == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
 
-            bool premul = source.PixelFormat == PixelFormat.Format32bppPArgb;
             BitmapData src = source.LockBits(
                 new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, source.PixelFormat);
             int srcStride = src.Stride;
@@ -142,12 +141,11 @@ namespace Voltide.UI
                     {
                         b = g = r = 0;
                     }
-                    else if (!premul && a < 255)
-                    {
-                        b = (byte)(b * a / 255);
-                        g = (byte)(g * a / 255);
-                        r = (byte)(r * a / 255);
-                    }
+                    // CreateIconIndirect + 32bpp alpha DIB (BI_BITFIELDS) expects
+                    // STRAIGHT (non-premultiplied) alpha — see KB Q318876. The source
+                    // is Format32bppArgb (straight), so the RGB channels must be copied
+                    // verbatim. Premultiplying here turned the low-alpha rounded-corner
+                    // glass pixels dark, which showed up as grey dots on the four corners.
                     dib[d] = b;
                     dib[d + 1] = g;
                     dib[d + 2] = r;
