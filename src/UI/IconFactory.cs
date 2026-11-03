@@ -424,28 +424,56 @@ namespace Voltide.UI
 
         // --------------------------------------------------------------- app icon
         //
-        // Frosted-glass squircle: near-white, faint mint-to-blue vertical gradient,
-        // thin bright inner rim. A thick lightning bolt with round caps and joins
-        // sits on top, mint (#7EE8B0) at the top-left to cyan (#7CC8F8) at the
-        // bottom-right. No drop shadow — pixels outside the squircle stay alpha 0.
+        // Frosted near-white squircle with a mint rim and a soft top highlight.
+        // The bolt is a filled silhouette traced from the reference: wide upper
+        // parallelogram, rounded top-right tip, a notch, then a lower piece that
+        // tapers to a rounded bottom-left tip. Gradient #A8F0C0 to #7CC8F8, with
+        // a soft shadow under the fill. Pixels outside the squircle stay alpha 0.
         // This is the exe / taskbar / Alt-Tab icon, and the tray glyph at 100%.
 
-        private static readonly Color BoltMint = Color.FromArgb(255, 0x7E, 0xE8, 0xB0);
-        private static readonly Color BoltCyan = Color.FromArgb(255, 0x7C, 0xC8, 0xF8);
-        // Deeper ends used only at tray sizes, where the spec colours wash out.
-        private static readonly Color BoltMintDeep = Color.FromArgb(255, 0x1F, 0xC4, 0x84);
-        private static readonly Color BoltCyanDeep = Color.FromArgb(255, 0x1E, 0x96, 0xEE);
+        // Tray sizes only: the pale spec colours disappear on a light taskbar.
+        private static readonly Color BoltMintDeep = Color.FromArgb(255, 0x4E, 0xD6, 0x96);
+        private static readonly Color BoltCyanDeep = Color.FromArgb(255, 0x3A, 0xAE, 0xF4);
 
         private const float AppCornerRatio = 0.23f;
 
-        // Spine of the bolt in icon space. Round caps extend past these points,
-        // so the tips land inside the glass rather than on the rim.
-        private static readonly PointF[] BoltSpine = new PointF[]
+        // Filled outline in icon space, clockwise from the top tip. Traced from
+        // the reference plate so every size shares one silhouette.
+        private static readonly PointF[] BoltFill = new PointF[]
         {
-            new PointF(0.585f, 0.21f),
-            new PointF(0.340f, 0.50f),
-            new PointF(0.730f, 0.47f),
-            new PointF(0.420f, 0.78f)
+            new PointF(0.5851f, 0.1492f),
+            new PointF(0.6060f, 0.1522f),
+            new PointF(0.6209f, 0.1626f),
+            new PointF(0.6269f, 0.1746f),
+            new PointF(0.6269f, 0.2045f),
+            new PointF(0.5582f, 0.4015f),
+            new PointF(0.5671f, 0.4119f),
+            new PointF(0.6747f, 0.4119f),
+            new PointF(0.7179f, 0.4179f),
+            new PointF(0.7328f, 0.4269f),
+            new PointF(0.7433f, 0.4448f),
+            new PointF(0.7433f, 0.4746f),
+            new PointF(0.7164f, 0.5223f),
+            new PointF(0.5671f, 0.6926f),
+            new PointF(0.4671f, 0.8000f),
+            new PointF(0.4298f, 0.8239f),
+            new PointF(0.4089f, 0.8283f),
+            new PointF(0.3896f, 0.8224f),
+            new PointF(0.3776f, 0.8030f),
+            new PointF(0.3776f, 0.7806f),
+            new PointF(0.3866f, 0.7418f),
+            new PointF(0.4373f, 0.5971f),
+            new PointF(0.4388f, 0.5701f),
+            new PointF(0.4149f, 0.5626f),
+            new PointF(0.2881f, 0.5596f),
+            new PointF(0.2702f, 0.5507f),
+            new PointF(0.2582f, 0.5328f),
+            new PointF(0.2582f, 0.4985f),
+            new PointF(0.2687f, 0.4731f),
+            new PointF(0.3015f, 0.4269f),
+            new PointF(0.4910f, 0.2105f),
+            new PointF(0.5388f, 0.1671f),
+            new PointF(0.5807f, 0.1507f)
         };
 
         /// <summary>
@@ -504,50 +532,6 @@ namespace Voltide.UI
             return size <= 32;
         }
 
-        private static float BoltGrow(int size)
-        {
-            // Wider span at tray sizes, but not so wide the arms collide.
-            if (size <= 16) return 1.06f;
-            if (size <= 24) return 1.04f;
-            if (size <= 32) return 1.02f;
-            return 1f;
-        }
-
-        private static float BoltThickness(int size)
-        {
-            // Thick enough to read, thin enough that the notch stays open.
-            if (size <= 16) return size * 0.20f;
-            if (size <= 20) return size * 0.195f;
-            if (size <= 24) return size * 0.19f;
-            if (size <= 32) return size * 0.185f;
-            return size * 0.175f;
-        }
-
-        private static Color LerpColor(Color a, Color b, float t)
-        {
-            if (t < 0f) t = 0f;
-            if (t > 1f) t = 1f;
-            return Color.FromArgb(
-                255,
-                (int)(a.R + (b.R - a.R) * t),
-                (int)(a.G + (b.G - a.G) * t),
-                (int)(a.B + (b.B - a.B) * t));
-        }
-
-        private static Color BoltColorMint(int size)
-        {
-            if (!SmallIcon(size)) return BoltMint;
-            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
-            return LerpColor(BoltMint, BoltMintDeep, t);
-        }
-
-        private static Color BoltColorCyan(int size)
-        {
-            if (!SmallIcon(size)) return BoltCyan;
-            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
-            return LerpColor(BoltCyan, BoltCyanDeep, t);
-        }
-
         /// <summary>Signed distance to the rounded square. Negative is inside.</summary>
         private static float RoundRectDistance(float px, float py, float size, float radius)
         {
@@ -571,16 +555,17 @@ namespace Voltide.UI
             if (radius > size * 0.5f) radius = size * 0.5f;
 
             bool small = SmallIcon(size);
-            int baseA = small ? 248 : 230;
+            int baseA = small ? 250 : 236;
+            // Near-white plate. Small sizes carry a stronger mint/blue tint so the
+            // tile still reads on a white taskbar and does not turn into a grey block.
             Color top = small
-                ? Color.FromArgb(baseA, 206, 242, 226)
-                : Color.FromArgb(baseA, 246, 252, 249);
+                ? Color.FromArgb(baseA, 214, 246, 232)
+                : Color.FromArgb(baseA, 248, 253, 251);
             Color bot = small
-                ? Color.FromArgb(baseA, 188, 216, 244)
-                : Color.FromArgb(baseA, 226, 238, 250);
-            float rim = small ? Math.Max(1.25f, size * 0.09f) : Math.Max(1.25f, size * 0.028f);
-            float rimStrength = small ? 0.95f : 0.88f;
-            float sheen = small ? 0.20f : 0.12f;
+                ? Color.FromArgb(baseA, 196, 222, 246)
+                : Color.FromArgb(baseA, 232, 244, 252);
+            float rim = small ? Math.Max(1.2f, size * 0.07f) : Math.Max(1.4f, size * 0.022f);
+            float sheen = small ? 0.28f : 0.22f;
 
             BitmapData data = bmp.LockBits(
                 new Rectangle(0, 0, size, size),
@@ -633,11 +618,16 @@ namespace Voltide.UI
                         float distIn = -sd;
                         if (distIn >= 0f && distIn < rim)
                         {
-                            float u = 1f - distIn / rim;
-                            u = u * u * rimStrength;
-                            r = (int)(r + (255 - r) * u);
-                            g = (int)(g + (255 - g) * u);
-                            b = (int)(b + (255 - b) * u);
+                            float u = 1f - distIn / rim;          // 1 at the outer edge
+                            // Mint rim just inside the edge, bright white highlight on the lip.
+                            float mint = (1f - u) * (small ? 0.55f : 0.42f);
+                            r = (int)(r + (176 - r) * mint);
+                            g = (int)(g + (236 - g) * mint);
+                            b = (int)(b + (214 - b) * mint);
+                            float lip = u * u * (small ? 0.85f : 0.7f);
+                            r = (int)(r + (255 - r) * lip);
+                            g = (int)(g + (255 - g) * lip);
+                            b = (int)(b + (255 - b) * lip);
                         }
 
                         int a = (int)(baseA * cov + 0.5f);
@@ -665,20 +655,20 @@ namespace Voltide.UI
             }
         }
 
+        private static GraphicsPath FilledBoltPath(int size, float ox, float oy)
+        {
+            PointF[] pts = new PointF[BoltFill.Length];
+            for (int i = 0; i < BoltFill.Length; i++)
+            {
+                pts[i] = new PointF(BoltFill[i].X * size + ox, BoltFill[i].Y * size + oy);
+            }
+            GraphicsPath path = new GraphicsPath();
+            path.AddPolygon(pts);
+            return path;
+        }
+
         private static void PaintBolt(Bitmap bmp, int size)
         {
-            float grow = BoltGrow(size);
-            float thick = BoltThickness(size);
-            if (thick < 1.6f) thick = 1.6f;
-
-            PointF[] pts = new PointF[BoltSpine.Length];
-            for (int i = 0; i < BoltSpine.Length; i++)
-            {
-                float x = 0.5f + (BoltSpine[i].X - 0.5f) * grow;
-                float y = 0.5f + (BoltSpine[i].Y - 0.5f) * grow;
-                pts[i] = new PointF(x * size, y * size);
-            }
-
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.HighQuality;
@@ -687,19 +677,33 @@ namespace Voltide.UI
                 g.CompositingQuality = CompositingQuality.HighQuality;
                 g.CompositingMode = CompositingMode.SourceOver;
 
-                // Brush larger than the stroke so the end colour is not wrapped
-                // back onto the first pixel. Gamma off: Windows and libgdiplus match.
+                // Soft shadow under the fill, down and slightly right. Several
+                // translucent copies stand in for a blur; GDI+ has no blur filter.
+                int layers = size <= 24 ? 2 : 3;
+                float step = Math.Max(0.4f, size * 0.0035f);
+                for (int i = layers; i >= 1; i--)
+                {
+                    int a = (SmallIcon(size) ? 26 : 12) * i / layers;
+                    using (GraphicsPath shadow = FilledBoltPath(size, step * i * 0.35f, step * i))
+                    using (SolidBrush shade = new SolidBrush(Color.FromArgb(a, 80, 130, 150)))
+                    {
+                        g.FillPath(shade, shadow);
+                    }
+                }
+
+                // The bolt only covers the middle of a corner-to-corner gradient, so
+                // the brush colours are pushed past the spec. What lands on the
+                // silhouette is then #A8F0C0 at the top and #7CC8F8 at the bottom.
+                Color mint = SmallIcon(size) ? BoltMintDeep : Color.FromArgb(255, 196, 255, 176);
+                Color cyan = SmallIcon(size) ? BoltCyanDeep : Color.FromArgb(255, 96, 184, 255);
+                using (GraphicsPath bolt = FilledBoltPath(size, 0f, 0f))
                 using (LinearGradientBrush brush = new LinearGradientBrush(
-                    new RectangleF(size * 0.12f, size * 0.06f, size * 0.76f, size * 0.88f),
-                    BoltColorMint(size), BoltColorCyan(size),
-                    LinearGradientMode.ForwardDiagonal))
-                using (Pen pen = new Pen(brush, thick))
+                    new PointF(size * 0.30f, size * 0.16f),
+                    new PointF(size * 0.62f, size * 0.78f),
+                    mint, cyan))
                 {
                     brush.GammaCorrection = false;
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    pen.LineJoin = LineJoin.Round;
-                    g.DrawLines(pen, pts);
+                    g.FillPath(brush, bolt);
                 }
             }
         }
