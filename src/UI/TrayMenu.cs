@@ -40,25 +40,25 @@ namespace Voltide.UI
     /// </summary>
     internal class MenuPanel : Control
     {
-        private const float W = 270f;
+        private const float W = 248f;
         private const float HeaderH = 19f;
-        private const float RowH = 30f;
-        private const float Gap = 9f;
+        private const float RowH = 27f;
+        private const float Gap = 6f;
         private const float Corner = 8f;
 
-        private const float TextX = 26.22f;
-        private const float ValueX = 199.87f;
-        private const float RuleLeft = 26.81f;
-        private const float RuleRight = 200.06f;
+        private const float TextX = 18f;
+        private const float ValueX = 180f;
+        private const float RuleLeft = 18.5f;
+        private const float RuleRight = 180.5f;
         private const float RuleW = 0.75f;
 
-        private const float BarX = 131.11f;
-        private const float BarY = 12.03f;
+        private const float BarX = 118f;
+        private const float BarY = 10.53f;
         private const float BarW = 57.51f;
         private const float BarH = 5.95f;
 
-        private const float LevelBaseline = 21.95f;   // rows with a percentage
-        private const float CjkBaseline = 20.42f;     // 休眠中 / 退出应用
+        private const float LevelBaseline = 20.45f;   // rows with a percentage
+        private const float CjkBaseline = 18.92f;     // 休眠中 / 退出应用
 
         private static readonly Color Bg = Color.FromArgb(15, 15, 15);
         private static readonly Color Rule = Color.FromArgb(30, 30, 30);
@@ -257,6 +257,9 @@ namespace Voltide.UI
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            // Greyscale anti-aliasing: at 100% DPI the 16px CJK glyphs render cleaner
+            // with grey AA than with ClearType, whose sub-pixel colour fringes show
+            // up as dirty red/blue edges on small text.
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 
             float s = _scale;
@@ -373,6 +376,7 @@ namespace Voltide.UI
 
                 if (isLowBattery)
                 {
+                    // The Chinese label shares the same 16 px size as 开机启动 / 退出应用.
                     using (SolidBrush brush = new SolidBrush(Lift(Soft, lift)))
                     {
                         g.DrawString("低电量提醒", _cnFont, brush, TextX * s,
@@ -510,12 +514,12 @@ namespace Voltide.UI
         /// </summary>
         private void DrawSwitch(Graphics g, float s, float rowTop, int lift)
         {
-            const float TrackX = 210.81f;
-            const float TrackY = 10.49f;
+            const float TrackX = 188f;
+            const float TrackY = 8.99f;
             const float TrackW = 28.7f;
             const float TrackH = 9.02f;
             const float KnobR = 4.51f;
-            const float KnobOnX = 235.01f;
+            const float KnobOnX = 212f;
             const float KnobOffX = TrackX + KnobR;
 
             float x = TrackX * s;
@@ -551,10 +555,22 @@ namespace Voltide.UI
 
         private static Color Mix(Color a, Color b, float t)
         {
+            // Clamp t and every channel: the switch animation ease can overshoot past
+            // 1 when a frame interval spikes, and a channel over 255 throws an
+            // ArgumentException from Color.FromArgb that blanks the whole menu window.
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
             return Color.FromArgb(
-                (int)(a.R + (b.R - a.R) * t),
-                (int)(a.G + (b.G - a.G) * t),
-                (int)(a.B + (b.B - a.B) * t));
+                ClampByte((int)(a.R + (b.R - a.R) * t)),
+                ClampByte((int)(a.G + (b.G - a.G) * t)),
+                ClampByte((int)(a.B + (b.B - a.B) * t)));
+        }
+
+        private static int ClampByte(int v)
+        {
+            if (v < 0) return 0;
+            if (v > 255) return 255;
+            return v;
         }
 
         /// <summary>
@@ -566,7 +582,7 @@ namespace Voltide.UI
             bool cjk = CardRenderer.HasCjk(text);
             FontKind kind = cjk ? FontKind.Chinese : FontKind.MontserratMedium;
 
-            float px = 20f * _scale;
+            float px = 16f * _scale;
             Font font = FontManager.Get(kind, px);
             if (string.IsNullOrEmpty(text)) return font;
 
@@ -626,11 +642,20 @@ namespace Voltide.UI
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing && _anim != null)
+            if (disposing)
             {
-                _anim.Stop();
-                _anim.Dispose();
-                _anim = null;
+                if (_anim != null)
+                {
+                    _anim.Stop();
+                    _anim.Dispose();
+                    _anim = null;
+                }
+                if (_switchAnim != null)
+                {
+                    _switchAnim.Stop();
+                    _switchAnim.Dispose();
+                    _switchAnim = null;
+                }
             }
             base.Dispose(disposing);
         }

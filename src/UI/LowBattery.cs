@@ -92,12 +92,53 @@ namespace Voltide.UI
     {
         private const int RecoveryMargin = 5;
 
+        // "Full" starts at 95: some receivers stop reporting charge at 95–99 even
+        // though the cell is done, and waiting for a literal 100 would never fire.
+        private const int FullChargePercent = 95;
+
         private sealed class State
         {
             public bool Warned;
+            public bool WarnedFull;
         }
 
         private readonly Dictionary<string, State> _states = new Dictionary<string, State>();
+
+        /// <summary>
+        /// Returns the devices that newly reached a full charge on this refresh.
+        /// enabled rides the low-battery switch: one toggle governs both ends of the
+        /// charge cycle. Unplugging resets the state, so the next charge to full
+        /// notifies again — one toast per charge session.
+        /// </summary>
+        public List<DeviceSnapshot> EvaluateFullCharge(IList<DeviceSnapshot> snapshots, bool enabled)
+        {
+            List<DeviceSnapshot> due = new List<DeviceSnapshot>();
+            if (!enabled || snapshots == null) return due;
+
+            foreach (DeviceSnapshot s in snapshots)
+            {
+                if (s == null || s.Info == null || s.Reading == null) continue;
+                if (string.IsNullOrEmpty(s.Info.Id)) continue;
+                if (!s.Reading.Online || !s.Reading.Percent.HasValue) continue;
+
+                State state = GetState(s.Info.Id);
+
+                // Off the cable (or the receiver cannot tell): the episode is over.
+                if (!s.Reading.Charging)
+                {
+                    state.WarnedFull = false;
+                    continue;
+                }
+
+                if (s.Reading.Percent.Value >= FullChargePercent && !state.WarnedFull)
+                {
+                    state.WarnedFull = true;
+                    due.Add(s);
+                }
+            }
+
+            return due;
+        }
 
         /// <summary>
         /// Returns the devices that newly crossed the threshold on this refresh.

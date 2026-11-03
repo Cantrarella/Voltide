@@ -22,7 +22,8 @@ namespace Voltide.UI
         private static readonly PrivateFontCollection _pfc = new PrivateFontCollection();
         private static FontFamily _montserratSemiBold;
         private static FontFamily _montserratMedium;
-        private static FontFamily _hyqihei;   // CJK face: Alibaba PuHui Ti 3.0 75 SemiBold
+        private static FontFamily _hyqihei;   // CJK face: MiSans (unified with Latin)
+        private static FontFamily _misans;    // MiSans digit subset: the tray battery digit
         private static bool _ready;
 
         // AddMemoryFont keeps a pointer into the buffer, so these blocks must live as
@@ -34,8 +35,8 @@ namespace Voltide.UI
         private static readonly Dictionary<string, Font> _fontCache = new Dictionary<string, Font>();
 
         // Bundled fonts win: the design must look identical on a machine where
-        // Montserrat / 汉仪旗黑 were never installed. The folder is copied next to the
-        // exe (and next to run.cmd for the in-memory build) so the project is portable.
+        // MiSans was never installed. The folder is copied next to the exe (and next
+        // to run.cmd for the in-memory build) so the project is portable.
         private static readonly string[] SearchRoots = new string[]
         {
             Path.Combine(Environment.CurrentDirectory, "Fonts"),
@@ -49,17 +50,31 @@ namespace Voltide.UI
             if (_ready) return;
             _ready = true;
 
-            _montserratSemiBold = LoadEmbedded("Montserrat-SemiBold.ttf")
-                                  ?? LoadAny(new string[] { "Montserrat-SemiBold.ttf" });
-            _montserratMedium = LoadEmbedded("Montserrat-Medium.ttf")
-                                ?? LoadAny(new string[] { "Montserrat-Medium.ttf" });
-            _hyqihei = LoadEmbedded("AlibabaPuHuiTi-3-75-SemiBold.ttf")
-                       ?? LoadAny(new string[] { "AlibabaPuHuiTi-3-75-SemiBold.ttf" });
+            // The whole UI is unified on MiSans Medium: Latin, digits and CJK all come
+            // from the one face, so mixed text like "GPW3 鼠标 89%" no longer switches
+            // typeface mid-string. Medium is one weight heavier than Regular, which
+            // keeps the 14-17 px menu text crisp instead of the grey fringes a thin
+            // Regular weight leaves after the menu's 0.92x shrink.
+            FontFamily misans = LoadEmbedded("MiSans-Medium.ttf")
+                                ?? LoadAny(new string[] { "MiSans-Medium.ttf" })
+                                ?? LoadEmbedded("MiSans-Regular.ttf")
+                                ?? LoadAny(new string[] { "MiSans-Regular.ttf" });
+
+            _montserratSemiBold = misans;
+            _montserratMedium = misans;
+            _hyqihei = misans;
+
+            // The tray icon only ever draws 0-9 and %, so it keeps the tiny digit
+            // subset rather than the full face.
+            _misans = LoadEmbedded("MiSans-Digits.ttf")
+                      ?? LoadAny(new string[] { "MiSans-Digits.ttf" })
+                      ?? misans;
 
             // fallbacks
-            if (_montserratSemiBold == null) _montserratSemiBold = NewFamily("Montserrat");
-            if (_montserratMedium == null) _montserratMedium = NewFamily("Segoe UI");
+            if (_montserratSemiBold == null) _montserratSemiBold = NewFamily("MiSans");
+            if (_montserratMedium == null) _montserratMedium = NewFamily("MiSans");
             if (_hyqihei == null) _hyqihei = NewFamily("Microsoft YaHei UI");
+            if (_misans == null) _misans = _montserratSemiBold ?? NewFamily("MiSans");
         }
 
         private static FontFamily NewFamily(string name)
@@ -165,6 +180,7 @@ namespace Voltide.UI
                 case FontKind.MontserratSemiBold: family = _montserratSemiBold; break;
                 case FontKind.MontserratMedium: family = _montserratMedium; break;
                 case FontKind.Chinese: family = _hyqihei; break;
+                case FontKind.MiSans: family = _misans; break;
                 default: family = _montserratMedium; break;
             }
 
@@ -186,6 +202,7 @@ namespace Voltide.UI
     {
         MontserratSemiBold,
         MontserratMedium,
-        Chinese
+        Chinese,
+        MiSans
     }
 }

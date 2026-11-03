@@ -102,15 +102,23 @@ namespace Voltide.UI
             _refreshBox = _refresh.GetBounds();
         }
 
+        /// <summary>Shrinks a box around a centre and shifts it, matching DrawIcons.</summary>
+        private static RectangleF ShrinkBox(RectangleF box, PointF centre, float shiftX)
+        {
+            float x = centre.X + (box.Left - centre.X) * IconShrink + shiftX;
+            float y = centre.Y + (box.Top - centre.Y) * IconShrink;
+            return new RectangleF(x, y, box.Width * IconShrink, box.Height * IconShrink);
+        }
+
         /// <summary>Icon hit box, in artboard coordinates, with a little slack.</summary>
         private static RectangleF RefreshHit
         {
-            get { InitIcons(); return Inflate(_refreshBox, 10f); }
+            get { InitIcons(); return Inflate(ShrinkBox(_refreshBox, RefreshPivot, RefreshShiftX), 12f); }
         }
 
         private static RectangleF CloseHit
         {
-            get { InitIcons(); return Inflate(_closeBox, 10f); }
+            get { InitIcons(); return Inflate(ShrinkBox(_closeBox, BoxCentre(_closeBox), 0f), 12f); }
         }
 
         /// <summary>
@@ -357,6 +365,13 @@ namespace Voltide.UI
 
         // -------------------------------------------------------------- icons
 
+        // Header icons: shrunk to 70% of the artboard size and pulled closer
+        // together — the stock layout spread two large glyphs across a wide gap
+        // that competed with the wordmark. The close icon keeps its position
+        // (shrunk around its own centre); refresh slides right to close the gap.
+        private const float IconShrink = 0.70f;
+        private const float RefreshShiftX = 36f;
+
         /// <summary>
         /// Icons stay pinned to the right edge when the window grows for extra cards,
         /// so the whole group is offset by the extra width and then scaled.
@@ -371,8 +386,20 @@ namespace Voltide.UI
             g.TranslateTransform(width - DesignW * scale, 0f);
             g.ScaleTransform(scale, scale);
 
+            GraphicsState s1 = g.Save();
+            g.TranslateTransform(RefreshPivot.X + RefreshShiftX, RefreshPivot.Y);
+            g.ScaleTransform(IconShrink, IconShrink);
+            g.TranslateTransform(-RefreshPivot.X, -RefreshPivot.Y);
             DrawIcon(g, _refresh, RefreshPivot, spinAngle, refreshHot, refreshPress);
-            DrawIcon(g, _closePath, BoxCentre(_closeBox), 0f, closeHot, closePress);
+            g.Restore(s1);
+
+            PointF cc = BoxCentre(_closeBox);
+            GraphicsState s2 = g.Save();
+            g.TranslateTransform(cc.X, cc.Y);
+            g.ScaleTransform(IconShrink, IconShrink);
+            g.TranslateTransform(-cc.X, -cc.Y);
+            DrawIcon(g, _closePath, cc, 0f, closeHot, closePress);
+            g.Restore(s2);
 
             g.Restore(state);
         }

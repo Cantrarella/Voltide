@@ -39,20 +39,12 @@ if (Test-Path $fontDir) {
     $staging = Join-Path $root 'obj'
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
+    # The whole UI is unified on MiSans Medium (crisper than Regular at menu sizes);
+    # MiSans-Digits is a 12 KB subset (0-9 and %) reserved for the tray icon.
     $faces = @(
-        @{ Source = 'Montserrat-Medium.ttf';   Embed = 'Montserrat-Medium.ttf' },
-        @{ Source = 'Montserrat-SemiBold.ttf'; Embed = 'Montserrat-SemiBold.ttf' }
+        @{ Source = 'MiSans-Medium.ttf'; Embed = 'MiSans-Medium.ttf' },
+        @{ Source = 'MiSans-Digits.ttf'; Embed = 'MiSans-Digits.ttf' }
     )
-
-    # The CJK face has a Chinese filename. Spelling it here would break: this script
-    # is UTF-8 without BOM and PowerShell 5.1 reads it as ANSI, turning the name into
-    # mojibake so Test-Path silently misses the file. Find it by elimination instead.
-    $cjk = Get-ChildItem $fontDir -Filter '*.ttf' |
-           Where-Object { $_.Name -notlike 'Montserrat*' } |
-           Sort-Object Length -Descending |
-           Select-Object -First 1
-
-    if ($cjk) { $faces += @{ Source = $cjk.Name; Embed = 'AlibabaPuHuiTi-3-75-SemiBold.ttf' } }
 
     foreach ($face in $faces) {
         $src = Join-Path $fontDir $face.Source

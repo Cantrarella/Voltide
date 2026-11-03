@@ -31,9 +31,13 @@ namespace Voltide.UI
 
         internal static readonly Color MenuMuted = Color.FromArgb(135, 135, 135); // card status line
 
-        public TrayApp()
+        public TrayApp() : this(false)
         {
-            _manager = new DeviceManager();
+        }
+
+        public TrayApp(bool demo)
+        {
+            _manager = new DeviceManager(demo);
 
             _form = new MainForm(_manager);
             _form.FormClosing += delegate(object s, FormClosingEventArgs e)
@@ -50,7 +54,7 @@ namespace Voltide.UI
             IntPtr handle = _form.Handle;
 
             _tray = new NotifyIcon();
-            _tray.Icon = IconFactory.ToIcon(32);
+            _tray.Icon = IconFactory.ToLightningIcon(32);
             _tray.Text = "Voltide";   // Windows tooltip on hover
             _tray.Visible = true;
 
@@ -203,17 +207,24 @@ namespace Voltide.UI
         /// Rebuilt on every open so the list is never stale. Order matches the panel:
         /// reporting a level, then awake-but-waiting, then asleep.
         /// </summary>
+        /// <summary>
+        /// Whole-menu shrink on top of DPI scaling. Every size in TrayMenu rides the
+        /// one scale factor — rows, gaps, fonts, the pill — so this single constant
+        /// compacts the menu proportionally without touching its layout code.
+        /// </summary>
+        private const float MenuShrink = 1.0f;
+
         private MenuPanel BuildMenu()
         {
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
             {
-                float scale = g.DpiX / 96f;
+                float scale = g.DpiX / 96f * MenuShrink;
 
-                // Sizes straight from the layered artboards: 20 px names and levels,
-                // 17 px Chinese, 9.76 px wordmark.
-                Font nameFont = FontManager.Get(FontKind.MontserratMedium, 20f * scale);
-                Font valueFont = FontManager.Get(FontKind.MontserratMedium, 20f * scale);
-                Font cnFont = FontManager.Get(FontKind.Chinese, 17f * scale);
+                // Unified 16 px across the whole menu: names, percentages and the
+                // Chinese action rows share one size so nothing looks oversized.
+                Font nameFont = FontManager.Get(FontKind.MontserratMedium, 16f * scale);
+                Font valueFont = FontManager.Get(FontKind.MontserratMedium, 16f * scale);
+                Font cnFont = FontManager.Get(FontKind.Chinese, 16f * scale);
                 Font markFont = FontManager.Get(FontKind.MontserratSemiBold, 9f * scale);
 
                 List<MenuRow> rows = new List<MenuRow>();
@@ -315,6 +326,8 @@ namespace Voltide.UI
                     {
                         _form.UpdateSnapshot(_manager.Snapshot());
                         NotifyLowBattery();
+                        NotifyFullCharge();
+                        UpdateTrayIcon();
                     }));
                 }
                 catch
@@ -367,9 +380,85 @@ namespace Voltide.UI
             }
         }
 
+        /// <summary>
+        /// "Full" counterpart of NotifyLowBattery, same refresh tick. Fires once per
+        /// charge session per device, and only while the low-battery switch is on —
+        /// one preference covers both ends of the battery story.
+        /// </summary>
+        private void NotifyFullCharge()
+        {
+            List<DeviceSnapshot> due;
+            try
+            {
+                due = _lowBattery.EvaluateFullCharge(_manager.Snapshot(), _lowBatteryThreshold != 0);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (due == null || due.Count == 0) return;
+
+            foreach (DeviceSnapshot s in due)
+            {
+                string name = s.Info.ShortModel;
+                if (string.IsNullOrEmpty(name)) name = s.Info.Model;
+                if (string.IsNullOrEmpty(name)) name = s.Info.Name;
+
+                _tray.ShowBalloonTip(
+                    8000,
+                    "Voltide · 充电完成",
+                    name + " 电量已充满",
+                    ToolTipIcon.Info);
+            }
+        }
+
         public void ShowPanel()
         {
             _form.ShowPanel();
+        }
+
+        // ------------------------------------------------------------- tray icon
+
+        private int _trayPercent = -1;   // -1 = default logo, otherwise the battery digit
+
+        /// <summary>
+        /// Swaps the tray icon for a live battery digit: the lowest online device's
+        /// percentage, framed by a corner bracket. Falls back to the logo when no
+        /// device is reporting. Runs on the UI thread after each refresh.
+        ///
+        /// The old icon is disposed before the swap — NotifyIcon copies the handle, so
+        /// leaving the previous Icon for the GC leaks a GDI object per refresh.
+        /// </summary>
+        private void UpdateTrayIcon()
+        {
+            int percent = -1;
+
+            foreach (DeviceSnapshot s in _manager.Snapshot())
+            {
+                if (s == null || s.Reading == null) continue;
+                if (!s.Reading.Online || !s.Reading.Percent.HasValue) continue;
+
+                int p = s.Reading.Percent.Value;
+                if (p < 0) p = 0;
+                if (p > 100) p = 100;
+
+                if (percent < 0 || p < percent) percent = p;
+            }
+
+            if (percent == _trayPercent) return;
+            _trayPercent = percent;
+
+            Icon next;
+            if (percent < 0) next = IconFactory.ToLightningIcon(32);
+            else if (percent >= 100) next = IconFactory.ToLightningIcon(32);
+            else next = IconFactory.ToBatteryIcon(percent, 32);
+
+            Icon previous = _tray.Icon;
+            _tray.Icon = next;
+            if (previous != null) previous.Dispose();
+
+            _tray.Text = percent < 0 ? "Voltide" : "Voltide · 最低电量 " + percent + "%";
         }
 
         public void Dispose()

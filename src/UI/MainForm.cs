@@ -1103,29 +1103,6 @@ namespace Voltide.UI
             }
 
             DrawDots(g, top + lineH * 2f + leading, dotsArea);
-            DrawCredit(g);
-        }
-
-        /// <summary>
-        /// Designer credit, only ever visible in the empty state — once a device shows
-        /// up the panel belongs to the data, not to the author.
-        /// </summary>
-        private void DrawCredit(Graphics g)
-        {
-            Font font = FontManager.Get(FontKind.MontserratMedium, 14f * 4f / 3f * _scale);
-            float lineH = font.GetHeight(g);
-            float y = Height - 46f * _scale - lineH;
-
-            using (SolidBrush brush = new SolidBrush(Color.FromArgb(200, 200, 200)))
-            using (StringFormat sf = new StringFormat())
-            {
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Near;
-                sf.FormatFlags = StringFormatFlags.NoWrap;
-
-                g.DrawString("Designed by Joko", font, brush,
-                    new RectangleF(0f, y, Width, lineH), sf);
-            }
         }
 
         // ------------------------------------------------------- refresh rate
@@ -1208,7 +1185,7 @@ namespace Voltide.UI
         /// </summary>
         /// <summary>
         /// 15s / 30s / 90s radios along the bottom edge. Only drawn when cards are on
-        /// screen — in the empty state that strip carries the designer credit instead.
+        /// screen — the empty state keeps that strip clear.
         /// </summary>
         private void DrawRefreshPicker(Graphics g)
         {
@@ -1342,10 +1319,22 @@ namespace Voltide.UI
 
         private static Color Mix(Color a, Color b, float t)
         {
-            return Color.FromArgb(
-                (int)(a.R + (b.R - a.R) * t),
-                (int)(a.G + (b.G - a.G) * t),
-                (int)(a.B + (b.B - a.B) * t));
+            // Clamp t and every channel: the animation ease can overshoot past 1 when
+            // a frame interval spikes (window stall), and a channel over 255 throws an
+            // ArgumentException from Color.FromArgb that blanks the whole window.
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+            int r = ClampByte((int)(a.R + (b.R - a.R) * t));
+            int g = ClampByte((int)(a.G + (b.G - a.G) * t));
+            int bl = ClampByte((int)(a.B + (b.B - a.B) * t));
+            return Color.FromArgb(r, g, bl);
+        }
+
+        private static int ClampByte(int v)
+        {
+            if (v < 0) return 0;
+            if (v > 255) return 255;
+            return v;
         }
 
         /// <summary>Hit test for the three radios. Returns -1 when the click missed.</summary>
