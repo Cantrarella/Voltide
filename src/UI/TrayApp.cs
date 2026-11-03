@@ -22,6 +22,9 @@ namespace Voltide.UI
         private bool _refreshing;
         private bool _refreshQueued;
 
+        private readonly LowBatteryGuard _lowBattery = new LowBatteryGuard();
+        private int _lowBatteryThreshold;
+
         // A second right-click replaces the popup instead of stacking another copy.
         private TrayMenuForm _menuForm;
 
@@ -58,10 +61,17 @@ namespace Voltide.UI
             };
 
             _form.RefreshSeconds = LoadRefreshSeconds();
+            _lowBatteryThreshold = LowBatterySettings.Load();
+            _form.LowBatteryThreshold = _lowBatteryThreshold;
             _form.RefreshRateChanged += delegate
             {
                 SaveRefreshSeconds(_form.RefreshSeconds);
                 ApplyInterval();
+            };
+            _form.LowBatteryChanged += delegate
+            {
+                _lowBatteryThreshold = LowBatterySettings.Normalize(_form.LowBatteryThreshold);
+                LowBatterySettings.Save(_lowBatteryThreshold);
             };
 
             _timer = new System.Windows.Forms.Timer();
@@ -158,8 +168,16 @@ namespace Voltide.UI
             panel.AutostartEnabled = Autostart.IsSupported();
             panel.AutostartOn = Autostart.IsSupported() && Autostart.IsEnabled();
 
+            panel.LowBatteryThreshold = _lowBatteryThreshold;
+
             MenuPanel captured = panel;
             panel.AutostartToggled += delegate { Autostart.Set(captured.AutostartOn); };
+            panel.LowBatteryChanged += delegate
+            {
+                _lowBatteryThreshold = LowBatterySettings.Normalize(captured.LowBatteryThreshold);
+                LowBatterySettings.Save(_lowBatteryThreshold);
+                try { _form.LowBatteryThreshold = _lowBatteryThreshold; } catch { }
+            };
 
             form.Controls.Add(panel);
 
@@ -296,6 +314,7 @@ namespace Voltide.UI
                     _form.BeginInvoke(new MethodInvoker(delegate
                     {
                         _form.UpdateSnapshot(_manager.Snapshot());
+                        NotifyLowBattery();
                     }));
                 }
                 catch
@@ -308,6 +327,44 @@ namespace Voltide.UI
                     RefreshNow();
                 }
             });
+        }
+
+        /// <summary>
+        /// Runs on the UI thread after each refresh. One balloon per device that just
+        /// crossed the threshold; the guard makes sure it only happens once per episode.
+        /// </summary>
+        private void NotifyLowBattery()
+        {
+            List<DeviceSnapshot> due;
+            try
+            {
+                due = _lowBattery.Evaluate(_manager.Snapshot(), _lowBatteryThreshold);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (due == null || due.Count == 0) return;
+
+            int shown = 0;
+            foreach (DeviceSnapshot s in due)
+            {
+                if (shown >= 3) break;
+                shown++;
+
+                string name = s.Info.ShortModel;
+                if (string.IsNullOrEmpty(name)) name = s.Info.Model;
+                if (string.IsNullOrEmpty(name)) name = s.Info.Name;
+
+                int percent = s.Reading.Percent.HasValue ? s.Reading.Percent.Value : 0;
+
+                _tray.ShowBalloonTip(
+                    8000,
+                    "Voltide · 低电量提醒",
+                    name + " 电量 " + percent + "%，该充电了",
+                    ToolTipIcon.Warning);
+            }
         }
 
         public void ShowPanel()

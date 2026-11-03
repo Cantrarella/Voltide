@@ -93,6 +93,17 @@ namespace Voltide.UI
 
         public event EventHandler QuitRequested;
         public event EventHandler AutostartToggled;
+        public event EventHandler LowBatteryChanged;
+
+        private int _lowBatteryThreshold = LowBatterySettings.DefaultThreshold;
+
+        /// <summary>0 = off, otherwise the percentage that triggers a notification.
+        /// The row cycles through the choices instead of opening a dialog.</summary>
+        public int LowBatteryThreshold
+        {
+            get { return _lowBatteryThreshold; }
+            set { _lowBatteryThreshold = LowBatterySettings.Normalize(value); }
+        }
 
         private bool _autostartOn;
         private float _switchT;                                  // 0 = off, 1 = on (animated)
@@ -110,7 +121,7 @@ namespace Voltide.UI
         /// where writing a Run entry would point at powershell.exe instead.</summary>
         public bool AutostartEnabled { get { return _autostartEnabled; } set { _autostartEnabled = value; } }
 
-        public int LineCount { get { return _rows.Count + 2; } }   // + autostart + quit
+        public int LineCount { get { return _rows.Count + 3; } }   // + low battery + autostart + quit
 
         public MenuPanel(List<MenuRow> rows, float scale,
                          Font nameFont, Font valueFont, Font cnFont, Font markFont)
@@ -121,7 +132,7 @@ namespace Voltide.UI
             _valueFont = valueFont;
             _cnFont = cnFont;
             _markFont = markFont;
-            _hover = new float[rows.Count + 2];
+            _hover = new float[rows.Count + 3];
 
             SetStyle(ControlStyles.OptimizedDoubleBuffer
                      | ControlStyles.AllPaintingInWmPaint
@@ -165,7 +176,7 @@ namespace Voltide.UI
             if (hit != _hot)
             {
                 _hot = hit;
-                Cursor = (hit >= _rows.Count && hit <= _rows.Count + 1) ? Cursors.Hand : Cursors.Default;
+                Cursor = (hit >= _rows.Count && hit <= _rows.Count + 2) ? Cursors.Hand : Cursors.Default;
                 StartAnim();
             }
             base.OnMouseMove(e);
@@ -185,14 +196,21 @@ namespace Voltide.UI
 
             int hit = RowAt(e.Y);
 
-            if (hit == _rows.Count && _autostartEnabled)
+            if (hit == _rows.Count)
+            {
+                // Low-battery row: off -> 10 -> 20 -> 30 -> off, no dialog to open.
+                _lowBatteryThreshold = LowBatterySettings.Next(_lowBatteryThreshold);
+                Invalidate();
+                if (LowBatteryChanged != null) LowBatteryChanged(this, EventArgs.Empty);
+            }
+            else if (hit == _rows.Count + 1 && _autostartEnabled)
             {
                 // Autostart row: flip the switch and let the host write the Run entry.
                 _autostartOn = !_autostartOn;
                 StartSwitchAnim();
                 if (AutostartToggled != null) AutostartToggled(this, EventArgs.Empty);
             }
-            else if (hit == _rows.Count + 1)
+            else if (hit == _rows.Count + 2)
             {
                 if (QuitRequested != null) QuitRequested(this, EventArgs.Empty);
             }
@@ -312,10 +330,11 @@ namespace Voltide.UI
             float top = RowTop(index) * s;
             float h = RowH * s;
 
-            // Row order: devices..., autostart, quit.
-            bool isAutostart = index == _rows.Count;
-            bool isQuit = index == _rows.Count + 1;
-            MenuRow row = (isQuit || isAutostart) ? null : _rows[index];
+            // Row order: devices..., low battery, autostart, quit.
+            bool isLowBattery = index == _rows.Count;
+            bool isAutostart = index == _rows.Count + 1;
+            bool isQuit = index == _rows.Count + 2;
+            MenuRow row = (isQuit || isAutostart || isLowBattery) ? null : _rows[index];
 
             // hover wash, kept faint so the grid stays intact
             float hover = _hover[index];
@@ -348,6 +367,36 @@ namespace Voltide.UI
                     {
                         g.DrawString("退出应用", _cnFont, brush, TextX * s,
                                      top + CjkBaseline * s - FontManager.Ascent(_cnFont), sf);
+                    }
+                    return;
+                }
+
+                if (isLowBattery)
+                {
+                    using (SolidBrush brush = new SolidBrush(Lift(Soft, lift)))
+                    {
+                        g.DrawString("低电量提醒", _cnFont, brush, TextX * s,
+                                     top + CjkBaseline * s - FontManager.Ascent(_cnFont), sf);
+                    }
+
+                    // "关" is a word, the percentages are digits: same face split as
+                    // the device rows, so "20%" lines up with the levels above it.
+                    if (_lowBatteryThreshold == 0)
+                    {
+                        using (SolidBrush brush = new SolidBrush(Lift(Muted, lift)))
+                        {
+                            g.DrawString("关", _cnFont, brush, ValueX * s,
+                                         top + CjkBaseline * s - FontManager.Ascent(_cnFont), sf);
+                        }
+                    }
+                    else
+                    {
+                        using (SolidBrush brush = new SolidBrush(Lift(Accent, lift)))
+                        {
+                            g.DrawString(LowBatterySettings.Label(_lowBatteryThreshold),
+                                         _valueFont, brush, ValueX * s,
+                                         top + LevelBaseline * s - FontManager.Ascent(_valueFont), sf);
+                        }
                     }
                     return;
                 }

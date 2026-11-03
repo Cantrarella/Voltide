@@ -734,6 +734,19 @@ namespace Voltide.UI
                 fast = true;
             }
 
+            // Low-battery switch slide, on the same clock as the radios above.
+            float lowTarget = _lowBatteryThreshold != 0 ? 1f : 0f;
+            float lowDelta = lowTarget - _lowBatteryT;
+            if (Math.Abs(lowDelta) < 0.02f)
+            {
+                _lowBatteryT = lowTarget;
+            }
+            else
+            {
+                _lowBatteryT += lowDelta * 0.28f * (dt / 0.016f);
+                fast = true;
+            }
+
             foreach (CardAnim a in _anim.Values)
             {
                 if (a.Leaving)
@@ -930,6 +943,7 @@ namespace Voltide.UI
             DrawHint(e.Graphics);
 
             if (!ShowDots) DrawRefreshPicker(e.Graphics);
+            if (!ShowDots) DrawLowBatterySwitch(e.Graphics);
         }
 
         protected override void Dispose(bool disposing)
@@ -1154,6 +1168,40 @@ namespace Voltide.UI
         private int _refreshSeconds = 90;
         private readonly float[] _rateT = new float[] { 0f, 0f, 1f };   // 90s is the default
 
+        public event EventHandler LowBatteryChanged;
+
+        private int _lowBatteryThreshold = LowBatterySettings.DefaultThreshold;
+        private int _lastLowBatteryThreshold = LowBatterySettings.DefaultThreshold;
+        private float _lowBatteryT = 1f;
+        private bool _hotLowBattery;
+
+        /// <summary>
+        /// 0 = alerts off, otherwise the percentage that triggers a notification.
+        /// The panel switch only toggles on/off; the tray menu picks 10/20/30.
+        /// </summary>
+        public int LowBatteryThreshold
+        {
+            get { return _lowBatteryThreshold; }
+            set
+            {
+                value = LowBatterySettings.Normalize(value);
+                if (_lowBatteryThreshold == value) return;
+
+                _lowBatteryThreshold = value;
+                if (value != 0) _lastLowBatteryThreshold = value;
+
+                if (!Visible) _lowBatteryT = value != 0 ? 1f : 0f;
+                else StartAnimating();
+            }
+        }
+
+        private void ToggleLowBattery()
+        {
+            LowBatteryThreshold = _lowBatteryThreshold == 0
+                ? (_lastLowBatteryThreshold != 0 ? _lastLowBatteryThreshold : LowBatterySettings.DefaultThreshold)
+                : 0;
+        }
+
         /// <summary>
         /// Fades the selected radio instead of snapping it: the ring cools to green
         /// and the inner dot grows in. Both values ride the same 0..1 progress.
@@ -1207,7 +1255,91 @@ namespace Voltide.UI
             }
         }
 
+        // Bottom-right of the same strip as the radios: label, 开/关, pill.
+        private const float LowLabelX = 700f;
+        private const float LowStateX = 806f;
+        private const float LowPillRight = 905f;
+        private const float LowPillW = 46f;
+        private const float LowPillH = 24f;
+
+        /// <summary>
+        /// The low-battery switch. Shares the baseline and the green accent with the
+        /// refresh radios on the left, so the strip reads as one row of settings.
+        /// </summary>
+        private void DrawLowBatterySwitch(Graphics g)
+        {
+            float s = _scale;
+            Font cn = FontManager.Get(FontKind.Chinese, 15f * s);
+            float baseline = 528.29f * s;
+            float cy = 522.98f * s;
+            float t = _lowBatteryT;
+            float eased = t * t * (3f - 2f * t);
+            bool on = _lowBatteryThreshold != 0;
+
+            using (StringFormat sf = new StringFormat(StringFormat.GenericTypographic))
+            {
+                sf.FormatFlags |= StringFormatFlags.NoWrap;
+
+                Color label = _hotLowBattery
+                    ? Color.FromArgb(204, 204, 204)
+                    : Color.FromArgb(135, 135, 135);
+                using (SolidBrush brush = new SolidBrush(label))
+                {
+                    g.DrawString("低电量提醒", cn, brush, LowLabelX * s,
+                                 baseline - FontManager.Ascent(cn), sf);
+                }
+
+                using (SolidBrush brush = new SolidBrush(on ? CardRenderer.Accent
+                                                            : Color.FromArgb(135, 135, 135)))
+                {
+                    g.DrawString(on ? "开" : "关", cn, brush, LowStateX * s,
+                                 baseline - FontManager.Ascent(cn), sf);
+                }
+            }
+
+            float w = LowPillW * s;
+            float h = LowPillH * s;
+            float left = LowPillRight * s - w;
+            float top = cy - h / 2f;
+
+            Color track = Mix(Color.FromArgb(79, 79, 79), CardRenderer.Accent, eased);
+            using (GraphicsPath pill = Pill(new RectangleF(left, top, w, h)))
+            using (SolidBrush brush = new SolidBrush(track))
+            {
+                g.FillPath(brush, pill);
+            }
+
+            float pad = 3f * s;
+            float r = (h - 2f * pad) / 2f;
+            float knobX = left + pad + r + eased * (w - 2f * pad - 2f * r);
+            using (SolidBrush knob = new SolidBrush(Color.FromArgb(245, 245, 245)))
+            {
+                g.FillEllipse(knob, knobX - r, cy - r, r * 2f, r * 2f);
+            }
+        }
+
+        private static GraphicsPath Pill(RectangleF r)
+        {
+            float d = r.Height;
+            GraphicsPath p = new GraphicsPath();
+            p.AddArc(r.X, r.Y, d, d, 180f, 90f);
+            p.AddArc(r.Right - d, r.Y, d, d, 270f, 90f);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0f, 90f);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90f, 90f);
+            p.CloseFigure();
+            return p;
+        }
+
+        /// <summary>Hit test for the low-battery switch; the strip is not a drag handle.</summary>
+        private bool LowBatteryHit(int x, int y)
+        {
+            float s = _scale;
+            if (y < 505f * s || y > 545f * s) return false;
+            return x >= 690f * s && x <= 915f * s;
+        }
+
         /// <summary>Linear colour interpolation; t is clamped by the caller.</summary>
+
         private static Color Mix(Color a, Color b, float t)
         {
             return Color.FromArgb(
@@ -1435,12 +1567,14 @@ namespace Voltide.UI
 
             bool hotRefresh = over == IconRefresh;
             bool hotClose = over == IconClose;
+            bool hotLow = !ShowDots && LowBatteryHit(e.X, e.Y);
 
-            if (hotRefresh != _hotRefresh || hotClose != _hotClose)
+            if (hotRefresh != _hotRefresh || hotClose != _hotClose || hotLow != _hotLowBattery)
             {
                 _hotRefresh = hotRefresh;
                 _hotClose = hotClose;
-                Cursor = (over == IconNone) ? Cursors.Default : Cursors.Hand;
+                _hotLowBattery = hotLow;
+                Cursor = (over == IconNone && !hotLow) ? Cursors.Default : Cursors.Hand;
                 StartAnimating();
             }
 
@@ -1463,6 +1597,7 @@ namespace Voltide.UI
             // window drag, and OnMouseUp then sees wasDragging=true and drops the
             // selection — the picker looked frozen.
             if (RefreshHit(e.X, e.Y) >= 0) return;
+            if (!ShowDots && LowBatteryHit(e.X, e.Y)) return;
 
             int over = HitIcon(e.X, e.Y);
             if (over == IconNone)
@@ -1486,7 +1621,7 @@ namespace Voltide.UI
 
             int over = HitIcon(e.X, e.Y);
 
-            if (true)   // radios are not icons: always evaluate on release
+            // Radios and the alert switch are not icons: always evaluate on release.
             {
                 _pressRefresh = false;
                 _pressClose = false;
@@ -1498,6 +1633,11 @@ namespace Voltide.UI
                     RefreshSeconds = RefreshOptions[rateHit];
                     if (RefreshRateChanged != null) RefreshRateChanged(this, EventArgs.Empty);
                 }
+                else if (!wasDragging && !ShowDots && LowBatteryHit(e.X, e.Y))
+                {
+                    ToggleLowBattery();
+                    if (LowBatteryChanged != null) LowBatteryChanged(this, EventArgs.Empty);
+                }
                 else if (!wasDragging && over == IconRefresh) TryRefresh();
                 else if (!wasDragging && over == IconClose) Hide();
             }
@@ -1508,6 +1648,7 @@ namespace Voltide.UI
             base.OnMouseLeave(e);
             _hotRefresh = false;
             _hotClose = false;
+            _hotLowBattery = false;
             _pressRefresh = false;
             _pressClose = false;
             Cursor = Cursors.Default;
