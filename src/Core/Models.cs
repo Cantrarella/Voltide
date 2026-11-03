@@ -41,7 +41,13 @@ namespace Voltide.Core
     {
         public int? Percent;          // null = unknown
         public BatteryLevel Level;
-        public bool Charging;
+        /// <summary>
+        /// True while a charge cycle is underway, false when the cell is known
+        /// to be discharging. Null means this read could not tell — a failed
+        /// charge query must not be stored as false, or the next refresh treats
+        /// a still-charging device as newly unplugged.
+        /// </summary>
+        public bool? Charging;
         public bool Online;
         /// <summary>
         /// The dongle is present but the device did not answer (it sleeps between

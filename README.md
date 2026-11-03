@@ -128,7 +128,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 powershell -ExecutionPolicy Bypass -File pack.ps1 -Target dist
 ```
 
-三款字体以清单资源的形式嵌入可执行文件，因此产物为单个文件。
+界面字体以清单资源的形式嵌入可执行文件，因此产物为单个文件。`Fonts/` 不进仓库（字体许可不允许随源码分发）。构建前把 `MiSans-Medium.ttf` 和 `MiSans-Digits.ttf` 放进 `Fonts/`；缺任一文件时 `build.ps1` 会直接失败，而不是打出没有字体的 exe。
 
 ## 协议说明
 
@@ -147,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File pack.ps1 -Target dist
 - 共享同一接收器的无线设备通过接收器上报，而非各自独立上报。
 - 同品牌但不同型号的设备会被识别为现有型号。适配层目前按厂商与接口特征匹配，尚未区分具体型号。
 - 迈丛与狼蛛共用 USB 标识（`3554:FA09`）。目前仅适配迈丛的查询协议，狼蛛键盘可能被识别为迈丛型号，读数也可能不正确。两者需要通过监听设备主动上报来区分，尚未实现。
-- XInput 手柄只能读到**四档**电量（满 100% / 中 50% / 低 20% / 空 5%），不是精确百分比。卡片详情会标注 `XInput 四档`，避免误读为实测值。
+- XInput 手柄只能读到**四档**电量（满 100% / 中 50% / 低 20% / 空 5%），不是精确百分比。卡片详情会标注 `XInput 四档`，避免误读为实测值。有线手柄固定显示 100%，状态为「有线供电」，不会当成「刚刚充满」。
 
 ## 许可
 

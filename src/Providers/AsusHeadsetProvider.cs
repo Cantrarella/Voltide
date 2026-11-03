@@ -13,19 +13,20 @@ namespace Voltide.Providers
     /// which is verified on hardware for the Delta II:
     ///   64-byte frame on the vendor collection (UsagePage 0xFF00), report id 0xCC.
     ///
-    ///   query   : CC 12 07 00 00 ...            (64 bytes)
-    ///   reply   : CC 12 07 05 4D 14 01 ...      (64 bytes, echoed on the IN endpoint)
-    ///                  ^^  ^^  ^^  ^^
-    ///                  |   |   |   +-- byte 8 : low-battery prompt on/off
-    ///                  |   |   +------ byte 7 : low-battery warning level (%)
-    ///                  |   +---------- byte 6 : charge percent   <-- what we want
-    ///                  +-------------- byte 5 : sleep timer (minutes)
+    ///   query   : CC 12 07 00 00 ...                         (64 bytes)
+    ///   reply   : CC 12 07 00 00 05 4D 14 01 ...             (echoed on the IN endpoint)
+    ///                            ^^ ^^ ^^ ^^
+    ///                            |  |  |  +---- byte 8 : low-battery prompt on/off
+    ///                            |  |  +------- byte 7 : low-battery warning level (%)
+    ///                            |  +---------- byte 6 : charge percent
+    ///                            +------------- byte 5 : sleep timer (minutes)
     ///
     ///   charging: CC 12 08 -> reply byte 5 == 1 while charging
     ///
-    /// A firmware NAK comes back as .. FF AA .. and must be discarded. Replies for
-    /// a different command can arrive late from the dongle, so the read loop has to
-    /// match on the family/command bytes instead of trusting the first frame it sees.
+    /// A firmware NAK is FF AA in two places, and both have to be dropped:
+    /// bytes 1–2 (header NAK) and bytes 5–6 (payload NAK). Replies for a
+    /// different command can arrive late from the dongle, so the read loop
+    /// matches on the family/command bytes instead of trusting the first frame.
     /// </summary>
     public class AsusHeadsetProvider : IDeviceProvider
     {
@@ -40,6 +41,11 @@ namespace Voltide.Providers
 
         private const int BatteryIndex = 6;
         private const int ChargingIndex = 5;
+
+        // G-Helper's USBTimeout. The old 300 ms read gave up while a busy dongle
+        // was still answering. The wait stays inside Query, which RefreshNow runs
+        // on the thread pool, so the tray and the panel do not freeze with it.
+        private const int ReadTimeoutMs = 2000;
 
         // PIDs already confirmed elsewhere (G-Helper is verified on hardware for the
         // Delta II; Pelta values come from ASUS' own device list).
@@ -152,6 +158,8 @@ namespace Voltide.Providers
                     r.Level = BatteryMath.FromPercent(percent);
 
                     byte[] charging = Query(s, frameIn, frameOut, CmdCharging);
+                    // A missed reply is unknown, not "discharging". Leaving the
+                    // field null lets the manager keep the previous charge flag.
                     if (charging != null) r.Charging = charging[ChargingIndex] == 1;
 
                     return r;
@@ -199,13 +207,14 @@ namespace Voltide.Providers
 
                 for (int i = 0; i < 4; i++)
                 {
-                    byte[] reply = s.Read(300);
+                    byte[] reply = s.Read(ReadTimeoutMs);
                     if (reply == null) break;
-                    if (reply.Length < BatteryIndex + 1) continue;
-
-                    // Firmware NAK
-                    if (reply.Length > 2 && reply[1] == 0xFF && reply[2] == 0xAA) continue;
                     if (reply.Length < 3) continue;
+
+                    // Header NAK (bytes 1–2) and payload NAK (bytes 5–6).
+                    if (reply[1] == 0xFF && reply[2] == 0xAA) continue;
+                    if (reply.Length > 6 && reply[5] == 0xFF && reply[6] == 0xAA) continue;
+                    if (reply.Length < BatteryIndex + 1) continue;
                     if (reply[1] != Family || reply[2] != command) continue;
 
                     return reply;

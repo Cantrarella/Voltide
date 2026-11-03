@@ -5,7 +5,8 @@ obj/
 dist/
 
 # Fonts are embedded into the executable at build time and are not redistributed
-# with the source. Keep the folder out of the repository.
+# with the source (their licence). build.ps1 fails if MiSans-Medium.ttf or
+# MiSans-Digits.ttf is missing, so a clean tree cannot silently ship without them.
 Fonts/
 
 # Runtime artefacts

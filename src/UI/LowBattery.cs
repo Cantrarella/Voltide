@@ -8,49 +8,92 @@ namespace Voltide.UI
     /// Low-battery settings. One number does both jobs: 0 means "off", any other
     /// value is the percentage at which a notification fires.
     ///
-    /// Stored next to the refresh interval in HKCU\Software\Voltide, so the choice
-    /// survives a restart just like the other preferences.
+    /// Stored next to the refresh interval. The real app uses HKCU\Software\Voltide.
+    /// --demo uses Software\Voltide\Demo so a preview session cannot overwrite the
+    /// user's threshold. Turning the switch off writes 0, and the last 10/20/30
+    /// choice is kept beside it so a restart does not forget which one it was.
     /// </summary>
     internal static class LowBatterySettings
     {
-        private const string SettingsKey = @"Software\Voltide";
+        public const string RealKey = @"Software\Voltide";
+        public const string DemoKey = @"Software\Voltide\Demo";
+
         private const string ValueName = "LowBatteryThreshold";
+        private const string LastValueName = "LowBatteryThresholdLast";
 
         public static readonly int[] Choices = new int[] { 0, 10, 20, 30 };
 
         public const int DefaultThreshold = 20;
 
-        public static int Load()
+        public static int Load(string settingsKey)
+        {
+            int value;
+            if (!TryRead(settingsKey, ValueName, out value)) return DefaultThreshold;
+            return Normalize(value);
+        }
+
+        /// <summary>
+        /// Last non-zero choice. Missing, 0, or garbage falls back to the default
+        /// so the switch always has a real percentage to restore.
+        /// </summary>
+        public static int LoadLast(string settingsKey)
+        {
+            int value;
+            if (!TryRead(settingsKey, LastValueName, out value)) return DefaultThreshold;
+            value = Normalize(value);
+            return value == 0 ? DefaultThreshold : value;
+        }
+
+        /// <summary>
+        /// Older builds stored only the live threshold. If that value is 10 or 30
+        /// and the "last choice" value was never written, record it now so turning
+        /// the switch off later can restore it.
+        /// </summary>
+        public static void EnsureLast(string settingsKey, int threshold)
+        {
+            threshold = Normalize(threshold);
+            if (threshold == 0) return;
+            int existing;
+            if (TryRead(settingsKey, LastValueName, out existing) && Normalize(existing) != 0) return;
+            Save(settingsKey, threshold);
+        }
+
+        public static void Save(string settingsKey, int threshold)
         {
             try
             {
                 using (Microsoft.Win32.RegistryKey key =
-                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey, false))
+                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(settingsKey))
                 {
-                    if (key == null) return DefaultThreshold;
-                    object raw = key.GetValue(ValueName);
-                    if (raw == null) return DefaultThreshold;
-                    return Normalize(Convert.ToInt32(raw));
+                    if (key == null) return;
+                    int normalized = Normalize(threshold);
+                    key.SetValue(ValueName, normalized);
+                    if (normalized != 0) key.SetValue(LastValueName, normalized);
                 }
             }
             catch
             {
-                return DefaultThreshold;
             }
         }
 
-        public static void Save(int threshold)
+        private static bool TryRead(string settingsKey, string name, out int value)
         {
+            value = 0;
             try
             {
                 using (Microsoft.Win32.RegistryKey key =
-                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey))
+                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(settingsKey, false))
                 {
-                    if (key != null) key.SetValue(ValueName, Normalize(threshold));
+                    if (key == null) return false;
+                    object raw = key.GetValue(name);
+                    if (raw == null) return false;
+                    value = Convert.ToInt32(raw);
+                    return true;
                 }
             }
             catch
             {
+                return false;
             }
         }
 
@@ -107,13 +150,16 @@ namespace Voltide.UI
         /// <summary>
         /// Returns the devices that newly reached a full charge on this refresh.
         /// enabled rides the low-battery switch: one toggle governs both ends of the
-        /// charge cycle. Unplugging resets the state, so the next charge to full
-        /// notifies again — one toast per charge session.
+        /// charge cycle. The latch still moves while the switch is off, so turning
+        /// it back on does not replay a charge that already finished.
+        /// Unplugging resets the state, so the next charge to full notifies again —
+        /// one toast per charge session. Wired pads and a failed charge query are
+        /// not a charge session: only Charging == true can open one.
         /// </summary>
         public List<DeviceSnapshot> EvaluateFullCharge(IList<DeviceSnapshot> snapshots, bool enabled)
         {
             List<DeviceSnapshot> due = new List<DeviceSnapshot>();
-            if (!enabled || snapshots == null) return due;
+            if (snapshots == null) return due;
 
             foreach (DeviceSnapshot s in snapshots)
             {
@@ -123,17 +169,20 @@ namespace Voltide.UI
 
                 State state = GetState(s.Info.Id);
 
-                // Off the cable (or the receiver cannot tell): the episode is over.
-                if (!s.Reading.Charging)
+                // Known to be off the cable: the episode is over.
+                // Null (query failed, nothing earlier to keep) must not clear it.
+                if (s.Reading.Charging == false)
                 {
                     state.WarnedFull = false;
                     continue;
                 }
 
+                if (s.Reading.Charging != true) continue;
+
                 if (s.Reading.Percent.Value >= FullChargePercent && !state.WarnedFull)
                 {
                     state.WarnedFull = true;
-                    due.Add(s);
+                    if (enabled) due.Add(s);
                 }
             }
 
@@ -142,13 +191,20 @@ namespace Voltide.UI
 
         /// <summary>
         /// Returns the devices that newly crossed the threshold on this refresh.
-        /// Call once per refresh, with the threshold the user currently has selected.
+        /// threshold 0 means the switch is off: nothing is returned, but the latch
+        /// still tracks <paramref name="remembered"/> (the last 10/20/30 choice).
+        /// Otherwise a device that sat below the line the whole time the switch
+        /// was off would toast the moment it was turned back on.
         /// </summary>
-        public List<DeviceSnapshot> Evaluate(IList<DeviceSnapshot> snapshots, int threshold)
+        public List<DeviceSnapshot> Evaluate(IList<DeviceSnapshot> snapshots, int threshold, int remembered)
         {
             List<DeviceSnapshot> due = new List<DeviceSnapshot>();
+            if (snapshots == null) return due;
+
             threshold = LowBatterySettings.Normalize(threshold);
-            if (threshold == 0 || snapshots == null) return due;
+            int gate = threshold == 0 ? LowBatterySettings.Normalize(remembered) : threshold;
+            if (gate == 0) gate = LowBatterySettings.DefaultThreshold;
+            bool notify = threshold != 0;
 
             foreach (DeviceSnapshot s in snapshots)
             {
@@ -160,23 +216,24 @@ namespace Voltide.UI
                 State state = GetState(s.Info.Id);
 
                 // Charging cancels the whole episode: nobody wants to be warned about
-                // a device that is already on the cable.
-                if (s.Reading.Charging)
+                // a device that is already on the cable. Unknown is not "on the cable"
+                // and must not erase a warning that is already latched.
+                if (s.Reading.Charging == true)
                 {
                     state.Warned = false;
                     continue;
                 }
 
-                if (percent > threshold + RecoveryMargin)
+                if (percent > gate + RecoveryMargin)
                 {
                     state.Warned = false;
                     continue;
                 }
 
-                if (percent <= threshold && !state.Warned)
+                if (percent <= gate && !state.Warned)
                 {
                     state.Warned = true;
-                    due.Add(s);
+                    if (notify) due.Add(s);
                 }
             }
 

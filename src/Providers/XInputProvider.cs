@@ -27,7 +27,9 @@ namespace Voltide.Providers
     ///     full -> 100, medium -> 50, low -> 20, empty -> 5
     ///
     /// Treat the number as a four-notch gauge, not a measurement. A wired pad
-    /// reports type 1 and is shown as 100% charging, which is what it is.
+    /// reports type 1 and is shown as 100%. The cable powers the pad; XInput
+    /// has no charge flag, so Charging stays false. Marking it charging made
+    /// every launch look like a charge that had just finished.
     ///
     /// Verified on 8BitDo Ultimate 3E Xbox (VID 2DC8 / PID 202F, 2.4G): type 3,
     /// level 2 while the cell was half charged.
@@ -97,11 +99,12 @@ namespace Voltide.Providers
 
             if (info.BatteryType == 1)
             {
-                // Wired: the pad runs off the cable. XInput has no charge flag,
-                // and a cable is the closest thing to one.
+                // Wired: the pad runs off the cable. That is not a charge cycle.
+                // Charging stays false so startup does not raise "fully charged",
+                // and that notice cannot cover a real low-battery warning.
                 r.Percent = 100;
                 r.Level = BatteryLevel.Full;
-                r.Charging = true;
+                r.Charging = false;
                 r.Detail = "XInput 有线";
                 r.Raw = "type=1 level=" + info.BatteryLevel;
                 return r;
@@ -117,6 +120,10 @@ namespace Voltide.Providers
 
             r.Percent = percent;
             r.Level = BatteryMath.FromPercent(percent.Value);
+            // Alkaline / NiMH: XInput reports a level, not a charge flag.
+            // Leave it explicitly not charging so a 100% step is not "unknown"
+            // and does not open a full-charge notice.
+            r.Charging = false;
             r.Detail = "XInput 四档";
             r.Raw = "type=" + info.BatteryType + " level=" + info.BatteryLevel;
             return r;

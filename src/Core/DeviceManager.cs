@@ -80,6 +80,21 @@ namespace Voltide.Core
                 catalog = new List<HidDeviceInfo>();
             }
 
+            // A failed charge query leaves Charging null. Carry the last definite
+            // answer forward so one missed frame does not flip the device to
+            // "discharging" or re-arm the full-charge notice.
+            Dictionary<string, bool?> carriedCharging = new Dictionary<string, bool?>();
+            lock (_lock)
+            {
+                foreach (DeviceSnapshot old in _snapshots)
+                {
+                    if (old == null || old.Info == null || old.Reading == null) continue;
+                    if (string.IsNullOrEmpty(old.Info.Id)) continue;
+                    if (!old.Reading.Charging.HasValue) continue;
+                    carriedCharging[old.Info.Id] = old.Reading.Charging;
+                }
+            }
+
             foreach (IDeviceProvider p in _providers)
             {
                 List<DeviceInfo> devices;
@@ -105,6 +120,13 @@ namespace Voltide.Core
                         r.UpdatedAt = DateTime.Now;
                         r.Error = ex.Message;
                         r.Level = BatteryLevel.Unknown;
+                    }
+
+                    if (r != null && !r.Charging.HasValue && d != null && d.Id != null)
+                    {
+                        bool? carried;
+                        if (carriedCharging.TryGetValue(d.Id, out carried))
+                            r.Charging = carried;
                     }
 
                     DeviceSnapshot s = new DeviceSnapshot();

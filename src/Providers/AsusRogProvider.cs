@@ -14,10 +14,10 @@ namespace Voltide.Providers
     ///
     ///   query : 02 12 01 00 00 ...            (64 bytes)
     ///   reply : 02 12 01 00 00 00 30 02 01 00 14 30 ED 0E ...
-    ///                             ^^                ^^  ^^^^^
-    ///                             |                 |   +-- voltage, little endian (mV)
-    ///                             |                 +------ low-battery threshold (%)
-    ///                             +------------------------ charge percent
+    ///                             ^^          ^^    ^^^^^
+    ///                             |           |     +-- voltage, little endian (mV)
+    ///                             |           +-- low-battery threshold (%)
+    ///                             +-- charge percent
     ///
     /// Verified against Armoury Crate on a ROG Azoth Extreme: reply byte 6 read 0x30
     /// while the UI showed 48%, and byte 10 read 0x14 (the 20% warning level).

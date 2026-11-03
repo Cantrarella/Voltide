@@ -118,6 +118,9 @@ namespace Voltide.Providers
                     r.Level = BatteryMath.FromPercent(level);
                     r.Online = true;
                     r.Detail = "MCHOSE HID";
+                    // This frame has no charge bit. Keep the old "not charging"
+                    // answer so the card does not flip to unknown.
+                    r.Charging = false;
                 }
             }
             catch (Exception ex)

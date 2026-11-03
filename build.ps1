@@ -35,27 +35,31 @@ if (Test-Path $ico) { $iconOpt = @("/win32icon:$ico") }
 # Typefaces travel inside the exe, so a single file is enough to distribute.
 # Files are staged under ASCII names first: csc's /resource switch mangles
 # non-ASCII paths, and one of these is 汉仪旗黑.
+#
+# Fonts/ is gitignored: the licence does not allow shipping the files with the
+# source. A missing face used to be skipped, and a clean tree then built an exe
+# with no embedded typeface and no error. Fail here instead.
 $resOpt = @()
 $fontDir = Join-Path $root 'Fonts'
-if (Test-Path $fontDir) {
-    $staging = Join-Path $root 'obj'
-    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+$staging = Join-Path $root 'obj'
+New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
-    # The whole UI is unified on MiSans Medium (crisper than Regular at menu sizes);
-    # MiSans-Digits is a 12 KB subset (0-9 and %) reserved for the tray icon.
-    $faces = @(
-        @{ Source = 'MiSans-Medium.ttf'; Embed = 'MiSans-Medium.ttf' },
-        @{ Source = 'MiSans-Digits.ttf'; Embed = 'MiSans-Digits.ttf' }
-    )
+# The whole UI is unified on MiSans Medium (crisper than Regular at menu sizes);
+# MiSans-Digits is a 12 KB subset (0-9 and %) reserved for the tray icon.
+$faces = @(
+    @{ Source = 'MiSans-Medium.ttf'; Embed = 'MiSans-Medium.ttf' },
+    @{ Source = 'MiSans-Digits.ttf'; Embed = 'MiSans-Digits.ttf' }
+)
 
-    foreach ($face in $faces) {
-        $src = Join-Path $fontDir $face.Source
-        if (-not (Test-Path $src)) { continue }
-
-        $staged = Join-Path $staging $face.Embed
-        Copy-Item $src $staged -Force
-        $resOpt += "/resource:$staged,$($face.Embed)"
+foreach ($face in $faces) {
+    $src = Join-Path $fontDir $face.Source
+    if (-not (Test-Path $src)) {
+        throw "Missing font: $src. Fonts\ is not in the repository. Place MiSans-Medium.ttf and MiSans-Digits.ttf in Fonts\ before building. The build stops so a checkout without those files cannot ship an exe that silently falls back to another face."
     }
+
+    $staged = Join-Path $staging $face.Embed
+    Copy-Item $src $staged -Force
+    $resOpt += "/resource:$staged,$($face.Embed)"
 }
 
 $iconDir = Join-Path $root 'icons'

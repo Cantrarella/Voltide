@@ -1218,6 +1218,18 @@ namespace Voltide.UI
             }
         }
 
+        /// <summary>
+        /// Restores the 10/20/30 choice that was saved the last time the switch
+        /// was on. Called before <see cref="LowBatteryThreshold"/> is assigned
+        /// at startup, so turning the switch off and reopening the app still
+        /// comes back to 10 or 30 rather than the default 20.
+        /// </summary>
+        public void RememberLowBatteryChoice(int value)
+        {
+            value = LowBatterySettings.Normalize(value);
+            if (value != 0) _lastLowBatteryThreshold = value;
+        }
+
         private void ToggleLowBattery()
         {
             LowBatteryThreshold = _lowBatteryThreshold == 0

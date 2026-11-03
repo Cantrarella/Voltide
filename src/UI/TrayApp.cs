@@ -24,6 +24,26 @@ namespace Voltide.UI
 
         private readonly LowBatteryGuard _lowBattery = new LowBatteryGuard();
         private int _lowBatteryThreshold;
+        private int _lowBatteryRemembered = LowBatterySettings.DefaultThreshold;
+        private readonly string _settingsKey;
+
+        // ShowBalloonTip replaces whatever is already on screen, so several notices
+        // in one refresh used to leave only the last one visible. These wait their
+        // turn. Low-battery entries are inserted ahead of full-charge ones.
+        private sealed class PendingNotice
+        {
+            public int TimeoutMs;
+            public string Title;
+            public string Text;
+            public ToolTipIcon Icon;
+            public bool LowBattery;
+        }
+
+        private readonly List<PendingNotice> _notices = new List<PendingNotice>();
+        private bool _noticeShowing;
+        private int _noticeGen;
+        private DateTime _noticeShownAtUtc;
+        private System.Windows.Forms.Timer _noticeTimer;
 
         // A second right-click replaces the popup instead of stacking another copy.
         private TrayMenuForm _menuForm;
@@ -37,6 +57,9 @@ namespace Voltide.UI
 
         public TrayApp(bool demo)
         {
+            // Demo writes its own key. Sharing Software\Voltide let a --demo
+            // session overwrite the real refresh interval and the 10/30 choice.
+            _settingsKey = demo ? LowBatterySettings.DemoKey : LowBatterySettings.RealKey;
             _manager = new DeviceManager(demo);
 
             _form = new MainForm(_manager);
@@ -57,6 +80,7 @@ namespace Voltide.UI
             _tray.Icon = IconFactory.ToLightningIcon(32);
             _tray.Text = "Voltide";   // Windows tooltip on hover
             _tray.Visible = true;
+            _tray.BalloonTipClosed += delegate { OnBalloonClosed(); };
 
             _tray.MouseUp += delegate(object s, MouseEventArgs e)
             {
@@ -65,7 +89,11 @@ namespace Voltide.UI
             };
 
             _form.RefreshSeconds = LoadRefreshSeconds();
-            _lowBatteryThreshold = LowBatterySettings.Load();
+            _lowBatteryThreshold = LowBatterySettings.Load(_settingsKey);
+            _lowBatteryRemembered = LowBatterySettings.LoadLast(_settingsKey);
+            if (_lowBatteryThreshold != 0) _lowBatteryRemembered = _lowBatteryThreshold;
+            LowBatterySettings.EnsureLast(_settingsKey, _lowBatteryThreshold);
+            _form.RememberLowBatteryChoice(_lowBatteryRemembered);
             _form.LowBatteryThreshold = _lowBatteryThreshold;
             _form.RefreshRateChanged += delegate
             {
@@ -75,7 +103,8 @@ namespace Voltide.UI
             _form.LowBatteryChanged += delegate
             {
                 _lowBatteryThreshold = LowBatterySettings.Normalize(_form.LowBatteryThreshold);
-                LowBatterySettings.Save(_lowBatteryThreshold);
+                if (_lowBatteryThreshold != 0) _lowBatteryRemembered = _lowBatteryThreshold;
+                LowBatterySettings.Save(_settingsKey, _lowBatteryThreshold);
             };
 
             _timer = new System.Windows.Forms.Timer();
@@ -106,14 +135,12 @@ namespace Voltide.UI
 
         // ------------------------------------------------------- refresh rate
 
-        private const string SettingsKey = @"Software\Voltide";
-
-        private static int LoadRefreshSeconds()
+        private int LoadRefreshSeconds()
         {
             try
             {
                 using (Microsoft.Win32.RegistryKey key =
-                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey, false))
+                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(_settingsKey, false))
                 {
                     if (key == null) return 90;
                     object raw = key.GetValue("RefreshSeconds");
@@ -129,12 +156,12 @@ namespace Voltide.UI
             }
         }
 
-        private static void SaveRefreshSeconds(int seconds)
+        private void SaveRefreshSeconds(int seconds)
         {
             try
             {
                 using (Microsoft.Win32.RegistryKey key =
-                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey))
+                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(_settingsKey))
                 {
                     if (key != null) key.SetValue("RefreshSeconds", seconds);
                 }
@@ -179,7 +206,8 @@ namespace Voltide.UI
             panel.LowBatteryChanged += delegate
             {
                 _lowBatteryThreshold = LowBatterySettings.Normalize(captured.LowBatteryThreshold);
-                LowBatterySettings.Save(_lowBatteryThreshold);
+                if (_lowBatteryThreshold != 0) _lowBatteryRemembered = _lowBatteryThreshold;
+                LowBatterySettings.Save(_settingsKey, _lowBatteryThreshold);
                 try { _form.LowBatteryThreshold = _lowBatteryThreshold; } catch { }
             };
 
@@ -351,7 +379,7 @@ namespace Voltide.UI
             List<DeviceSnapshot> due;
             try
             {
-                due = _lowBattery.Evaluate(_manager.Snapshot(), _lowBatteryThreshold);
+                due = _lowBattery.Evaluate(_manager.Snapshot(), _lowBatteryThreshold, _lowBatteryRemembered);
             }
             catch
             {
@@ -372,11 +400,12 @@ namespace Voltide.UI
 
                 int percent = s.Reading.Percent.HasValue ? s.Reading.Percent.Value : 0;
 
-                _tray.ShowBalloonTip(
+                EnqueueNotice(
                     8000,
                     "Voltide · 低电量提醒",
                     name + " 电量 " + percent + "%，该充电了",
-                    ToolTipIcon.Warning);
+                    ToolTipIcon.Warning,
+                    true);
             }
         }
 
@@ -405,12 +434,111 @@ namespace Voltide.UI
                 if (string.IsNullOrEmpty(name)) name = s.Info.Model;
                 if (string.IsNullOrEmpty(name)) name = s.Info.Name;
 
-                _tray.ShowBalloonTip(
+                EnqueueNotice(
                     8000,
                     "Voltide · 充电完成",
                     name + " 电量已充满",
-                    ToolTipIcon.Info);
+                    ToolTipIcon.Info,
+                    false);
             }
+        }
+
+        /// <summary>
+        /// One balloon at a time. Low-battery notices are queued ahead of any
+        /// full-charge notice that has not been shown yet, so a wired pad's
+        /// "fully charged" tip cannot replace the warning the user needs.
+        /// </summary>
+        private void EnqueueNotice(int timeoutMs, string title, string text, ToolTipIcon icon, bool lowBattery)
+        {
+            const int cap = 6;
+            PendingNotice notice = new PendingNotice();
+            notice.TimeoutMs = timeoutMs;
+            notice.Title = title;
+            notice.Text = text;
+            notice.Icon = icon;
+            notice.LowBattery = lowBattery;
+
+            if (_notices.Count >= cap)
+            {
+                if (!lowBattery) return;
+                for (int i = _notices.Count - 1; i >= 0; i--)
+                {
+                    if (_notices[i].LowBattery) continue;
+                    _notices.RemoveAt(i);
+                    break;
+                }
+                if (_notices.Count >= cap) return;
+            }
+
+            if (!lowBattery)
+            {
+                _notices.Add(notice);
+            }
+            else
+            {
+                int i = 0;
+                while (i < _notices.Count && _notices[i].LowBattery) i++;
+                _notices.Insert(i, notice);
+            }
+
+            if (!_noticeShowing) ShowNextNotice();
+        }
+
+        private void ShowNextNotice()
+        {
+            if (_notices.Count == 0)
+            {
+                _noticeShowing = false;
+                return;
+            }
+
+            PendingNotice notice = _notices[0];
+            _notices.RemoveAt(0);
+            _noticeShowing = true;
+            int gen = ++_noticeGen;
+            _noticeShownAtUtc = DateTime.UtcNow;
+
+            try
+            {
+                _tray.ShowBalloonTip(notice.TimeoutMs, notice.Title, notice.Text, notice.Icon);
+            }
+            catch
+            {
+                _noticeShowing = false;
+                ShowNextNotice();
+                return;
+            }
+
+            if (_noticeTimer == null)
+            {
+                _noticeTimer = new System.Windows.Forms.Timer();
+                _noticeTimer.Tick += delegate
+                {
+                    int pending = (int)_noticeTimer.Tag;
+                    _noticeTimer.Stop();
+                    FinishNotice(pending);
+                };
+            }
+
+            _noticeTimer.Tag = gen;
+            _noticeTimer.Interval = notice.TimeoutMs < 1000 ? 1000 : notice.TimeoutMs;
+            _noticeTimer.Stop();
+            _noticeTimer.Start();
+        }
+
+        private void OnBalloonClosed()
+        {
+            // Wine can signal closed as soon as the tip is posted. Advancing
+            // then collapses the queue and only the last notice stays visible.
+            if ((DateTime.UtcNow - _noticeShownAtUtc).TotalMilliseconds < 1500) return;
+            FinishNotice(_noticeGen);
+        }
+
+        private void FinishNotice(int gen)
+        {
+            if (gen != _noticeGen) return;
+            _noticeShowing = false;
+            ShowNextNotice();
         }
 
         public void ShowPanel()
@@ -471,6 +599,13 @@ namespace Voltide.UI
             {
                 try { _menuForm.Close(); } catch { }
                 _menuForm = null;
+            }
+
+            if (_noticeTimer != null)
+            {
+                _noticeTimer.Stop();
+                _noticeTimer.Dispose();
+                _noticeTimer = null;
             }
 
             if (_timer != null)
