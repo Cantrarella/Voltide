@@ -8,15 +8,13 @@ namespace Voltide.UI
     /// Low-battery settings. One number does both jobs: 0 means "off", any other
     /// value is the percentage at which a notification fires.
     ///
-    /// Stored next to the refresh interval. The real app uses HKCU\Software\Voltide.
-    /// --demo uses Software\Voltide\Demo so a preview session cannot overwrite the
-    /// user's threshold. Turning the switch off writes 0, and the last 10/20/30
-    /// choice is kept beside it so a restart does not forget which one it was.
+    /// Stored next to the refresh interval under HKCU\Software\Voltide.
+    /// Turning the switch off writes 0, and the last 10/20/30 choice is kept
+    /// beside it so a restart does not forget which one it was.
     /// </summary>
     internal static class LowBatterySettings
     {
         public const string RealKey = @"Software\Voltide";
-        public const string DemoKey = @"Software\Voltide\Demo";
 
         private const string ValueName = "LowBatteryThreshold";
         private const string LastValueName = "LowBatteryThresholdLast";

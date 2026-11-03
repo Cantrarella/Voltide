@@ -30,8 +30,7 @@ namespace Voltide
             {
                 if (args != null && args.Length > 0 && args[0] == "--test")
                 {
-                    bool demoTest = args.Length > 1 && args[1] == "--demo";
-                    RunTest(demoTest);
+                    RunTest();
                     return;
                 }
 
@@ -43,38 +42,16 @@ namespace Voltide
                 }
 
                 bool autoShow = false;
-                bool demo = false;
                 if (args != null)
                 {
                     for (int i = 0; i < args.Length; i++)
                     {
                         if (args[i] == "--show") autoShow = true;
-                        if (args[i] == "--demo") { demo = true; autoShow = true; }
-                    }
-                }
-
-                // A copy renamed to *demo*.exe enters demo mode just by being
-                // double-clicked — no command-line arguments, no shortcut, no batch
-                // file. That dodges every cmd.exe argument-quoting pitfall.
-                if (!demo)
-                {
-                    string exeName = null;
-                    try { exeName = System.IO.Path.GetFileName(Application.ExecutablePath); }
-                    catch { }
-                    if (!string.IsNullOrEmpty(exeName) &&
-                        exeName.IndexOf("demo", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        demo = true;
-                        autoShow = true;
                     }
                 }
 
                 bool createdNew;
-                // Demo and normal builds get separate mutexes so a demo instance
-                // can run alongside (or instead of) a real one without either being
-                // silently dropped.
-                string mutexName = demo ? "Voltide-SingleInstance-Demo" : "Voltide-SingleInstance";
-                using (Mutex mutex = new Mutex(true, mutexName, out createdNew))
+                using (Mutex mutex = new Mutex(true, "Voltide-SingleInstance", out createdNew))
                 {
                     if (!createdNew)
                     {
@@ -95,7 +72,7 @@ namespace Voltide
                         Log("Domain: " + e.ExceptionObject);
                     };
 
-                    using (TrayApp app = new TrayApp(demo))
+                    using (TrayApp app = new TrayApp())
                     {
                         if (autoShow) app.ShowPanel();
                         Application.Run();
@@ -121,9 +98,9 @@ namespace Voltide
             }
         }
 
-        private static void RunTest(bool demo)
+        private static void RunTest()
         {
-            DeviceManager m = new DeviceManager(demo);
+            DeviceManager m = new DeviceManager();
             m.Refresh();
 
             List<DeviceSnapshot> snaps = m.Snapshot();

@@ -51,16 +51,10 @@ namespace Voltide.UI
 
         internal static readonly Color MenuMuted = Color.FromArgb(135, 135, 135); // card status line
 
-        public TrayApp() : this(false)
+        public TrayApp()
         {
-        }
-
-        public TrayApp(bool demo)
-        {
-            // Demo writes its own key. Sharing Software\Voltide let a --demo
-            // session overwrite the real refresh interval and the 10/30 choice.
-            _settingsKey = demo ? LowBatterySettings.DemoKey : LowBatterySettings.RealKey;
-            _manager = new DeviceManager(demo);
+            _settingsKey = LowBatterySettings.RealKey;
+            _manager = new DeviceManager();
 
             _form = new MainForm(_manager);
             _form.FormClosing += delegate(object s, FormClosingEventArgs e)

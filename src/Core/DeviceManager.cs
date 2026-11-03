@@ -23,13 +23,7 @@ namespace Voltide.Core
         private readonly object _refreshLock = new object();
         private List<DeviceSnapshot> _snapshots = new List<DeviceSnapshot>();
 
-        public DeviceManager() : this(false)
-        {
-        }
-
-        /// <summary>Demo mode registers synthetic devices so the UI can be eyeballed
-        /// without real hardware. Only reachable via the --demo switch.</summary>
-        public DeviceManager(bool demo)
+        public DeviceManager()
         {
             _providers.Add(new LogitechProvider());
             _providers.Add(new MchoseProvider());
@@ -41,8 +35,6 @@ namespace Voltide.Core
             _providers.Add(new XInputProvider());
             _providers.Add(new RazerProvider());
             _providers.Add(new HeadsetProvider());
-
-            if (demo) _providers.Add(new DemoProvider());
         }
 
         public List<DeviceSnapshot> Snapshot()
