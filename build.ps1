@@ -25,8 +25,9 @@ $gui  = Join-Path $root 'Voltide.exe'
 $test = Join-Path $root 'Voltide-Test.exe'
 $ico  = Join-Path $root 'app.ico'
 
-# The icon is generated from the logo geometry by tools\makeicon.ps1; if it is
-# missing the build still succeeds, just without a shell icon.
+# app.ico is drawn by IconFactory (Voltide.exe --make-icon), one native bitmap
+# per size. /win32icon embeds that group so Explorer and the taskbar pick a
+# size instead of scaling a single image. Missing file: build still succeeds.
 $iconOpt = @()
 if (Test-Path $ico) { $iconOpt = @("/win32icon:$ico") }
 

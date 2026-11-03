@@ -10,16 +10,22 @@ using System.Runtime.InteropServices;
 namespace Voltide.UI
 {
     /// <summary>
-    /// Renders Logo.svg (256 x 256: a green rounded plate with the bolt cut out in
-    /// dark violet) at any size, and packs the results into a multi-size .ico.
+    /// Draws the tray glyphs and the app icon at any pixel size, and packs the app
+    /// icon into a multi-size .ico.
     ///
-    /// Drawn rather than downscaled from one bitmap: the tray asks for 16 px at 100%
-    /// and 32 px at 200%, and a single 256 px source blurred badly at 16.
+    /// Each size is drawn on its own bitmap. Downscaling one 256 px plate is what
+    /// made the 16 px tray (and the 20/24 px sizes at 125/150% DPI) go soft.
     /// </summary>
     public static class IconFactory
     {
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr hIcon);
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int nIndex);
+
+        private const int SM_CXICON = 11;      // large icon, caption / Alt-Tab
+        private const int SM_CXSMICON = 49;    // small icon, tray / title bar
 
         private const string BoltPath =
             "M104.13,163.15h-52.65c-4.24,0-7-4.46-5.1-8.25L130.53-13.1h96.53l-72.07,113.8" +
@@ -63,15 +69,6 @@ namespace Voltide.UI
         private const float BracketInset = 0.06f;    // bracket sits 6% in from the edge
         private const float BracketArm = 0.22f;      // each arm reaches 22% of the size
         private const float BracketWidth = 1f;       // stroke width, in pixels (tray)
-
-        // The app icon uses a bolder, softer frame: thicker legs and a visibly
-        // rounded outer corner. Kept separate so the tray glyph stays crisp.
-        private const float AppBracketArm = 0.24f;
-        // Leg thickness as a fraction of the canvas so the frame scales cleanly from
-        // 16 px up to 256 px (a fixed 2 px was invisible at small sizes / chunky at
-        // large). 0.035 -> ~9 px at 256, ~0.6 px at 16. The rounded elbow radius is
-        // the stroke width / 2, produced by the Pen's round line-join.
-        private const float AppBracketWidthRatio = 0.035f;
 
         private static readonly Color BracketColor = Color.FromArgb(0x27, 0x24, 0x51);
         private static readonly Color DigitGreen = Color.FromArgb(0x03, 0xC0, 0x78);
@@ -149,22 +146,12 @@ namespace Voltide.UI
         }
 
         /// <summary>
-        /// Renders the "full charge" tray icon: the brand lightning bolt (dark violet
-        /// gradient, no green plate) centred inside the same corner-bracket frame as
-        /// the battery digits. Transparent background, so the bracket + bolt float.
-        /// Also the source for the new app.ico.
+        /// No-device tray glyph: the brand lightning bolt (dark violet gradient, no
+        /// plate) centred inside the same thin corner-bracket frame as the battery
+        /// digits. Transparent background. The full-charge tray uses
+        /// <see cref="RenderAppIcon"/> instead — this is not the app icon.
         /// </summary>
         public static Bitmap RenderLightning(int size)
-        {
-            return RenderLightning(size, false);
-        }
-
-        /// <summary>
-        /// Renders the lightning mark. When <paramref name="appIcon"/> is true the
-        /// corner bracket is drawn in the bolder, rounded app-icon style; otherwise
-        /// the thin tray style is used (the full-charge tray glyph shares this path).
-        /// </summary>
-        public static Bitmap RenderLightning(int size, bool appIcon)
         {
             EnsurePaths();
 
@@ -176,16 +163,6 @@ namespace Voltide.UI
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 g.Clear(Color.Transparent);
-
-                // White square plate goes down FIRST so it sits behind the bolt and
-                // bracket (drawn later in this method). Square, not rounded.
-                if (appIcon)
-                {
-                    using (SolidBrush plate = new SolidBrush(Color.White))
-                    {
-                        g.FillRectangle(plate, 0f, 0f, size, size);
-                    }
-                }
 
                 // The bolt path lives in 256-unit design space and runs diagonally
                 // across most of it. Measure its bounds, then scale it down to fit
@@ -222,26 +199,16 @@ namespace Voltide.UI
                 }
 
                 g.ResetTransform();
-                if (appIcon) DrawAppBrackets(g, size);
-                else DrawBrackets(g, size);
+                DrawBrackets(g, size);
             }
 
             return bmp;
         }
 
+        /// <summary>No-device tray icon. Transparent plate, thin bracket, violet bolt.</summary>
         public static Icon ToLightningIcon(int size)
         {
-            return ToLightningIcon(size, false);
-        }
-
-        /// <summary>
-        /// Lightning mark as a tray/app Icon. When <paramref name="appIcon"/> is true
-        /// the white square plate + rounded app-style bracket are used, matching the
-        /// app.ico; otherwise the thin transparent tray style.
-        /// </summary>
-        public static Icon ToLightningIcon(int size, bool appIcon)
-        {
-            using (Bitmap bmp = RenderLightning(size, appIcon))
+            using (Bitmap bmp = RenderLightning(size))
             {
                 IntPtr handle = bmp.GetHicon();
                 Icon icon = (Icon)Icon.FromHandle(handle).Clone();
@@ -335,54 +302,208 @@ namespace Voltide.UI
             }
         }
 
-        /// <summary>
-        /// App-icon variant: four L-shaped corner brackets whose outer elbow is
-        /// rounded. Drawn as stroked two-segment polylines with a round line-join, so
-        /// GDI+ rounds the corner exactly the way a design tool's "round join" does —
-        /// no manual arc geometry to get wrong.
-        /// </summary>
-        private static void DrawAppBrackets(Graphics g, int size)
+        // --------------------------------------------------------------- app icon
+        //
+        // Rounded squircle, diagonal lime (#D8F59A, top-left) to mint (#4FD8C8,
+        // bottom-right), white geometric bolt centred. No frame, no shadow. This is
+        // the exe / taskbar / Alt-Tab icon, and the tray glyph when the lowest
+        // online device is at 100%.
+
+        private static readonly Color AppLime = Color.FromArgb(255, 0xD8, 0xF5, 0x9A);
+        private static readonly Color AppMint = Color.FromArgb(255, 0x4F, 0xD8, 0xC8);
+
+        // Corner radius / side. The reference has long flat edges and a circular
+        // corner of about this size (an iOS-style rounded square, not a pure
+        // superellipse).
+        private const float AppCornerRatio = 0.22f;
+
+        // Bolt in icon space (0..1), clockwise from the top tip. Traced from the
+        // reference so the slash, the notch and the two tips land in the same place.
+        private static readonly PointF[] AppBoltUnit = new PointF[]
         {
-            float inset = size * BracketInset;
-            float arm = size * AppBracketArm;
-            float w = size * AppBracketWidthRatio;   // stroke scales with the canvas
+            new PointF(0.623f, 0.187f),
+            new PointF(0.543f, 0.440f),
+            new PointF(0.723f, 0.441f),
+            new PointF(0.381f, 0.801f),
+            new PointF(0.464f, 0.550f),
+            new PointF(0.279f, 0.549f)
+        };
 
-            float left = inset, top = inset;
-            float right = size - inset, bottom = size - inset;
+        /// <summary>
+        /// Small-icon pixels for the DPI this process is aware of.
+        /// 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%.
+        /// </summary>
+        public static int SystemSmallIconSize()
+        {
+            int s = GetSystemMetrics(SM_CXSMICON);
+            if (s < 16) s = 16;
+            return s;
+        }
 
-            // Each bracket is a two-segment polyline: vertical leg (to the corner)
-            // then horizontal leg (out from the corner). The round join at the corner
-            // point produces the rounded elbow; round caps soften the open ends.
-            PointF[][] brackets = new PointF[][]
+        /// <summary>
+        /// Large-icon pixels for the DPI this process is aware of.
+        /// 32 at 100%, 40 at 125%, 48 at 150%, 64 at 200%.
+        /// </summary>
+        public static int SystemLargeIconSize()
+        {
+            int s = GetSystemMetrics(SM_CXICON);
+            if (s < 32) s = 32;
+            return s;
+        }
+
+        /// <summary>App icon as a single-size HICON, drawn natively at <paramref name="size"/>.</summary>
+        public static Icon ToAppIcon(int size)
+        {
+            if (size < 1) size = 1;
+            using (Bitmap bmp = RenderAppIcon(size))
             {
-                new PointF[] { new PointF(left,  top + arm), new PointF(left,  top), new PointF(left + arm, top) },    // top-left
-                new PointF[] { new PointF(right, top + arm), new PointF(right, top), new PointF(right - arm, top) },   // top-right
-                new PointF[] { new PointF(right, bottom - arm), new PointF(right, bottom), new PointF(right - arm, bottom) }, // bottom-right
-                new PointF[] { new PointF(left,  bottom - arm), new PointF(left,  bottom), new PointF(left + arm, bottom) }    // bottom-left
-            };
-
-            using (Pen pen = new Pen(BracketColor, w))
-            {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                pen.LineJoin = LineJoin.Round;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                foreach (PointF[] bracket in brackets)
-                {
-                    g.DrawLines(pen, bracket);
-                }
-                g.SmoothingMode = SmoothingMode.None;
+                IntPtr handle = bmp.GetHicon();
+                Icon icon = (Icon)Icon.FromHandle(handle).Clone();
+                DestroyIcon(handle);
+                return icon;
             }
         }
 
-        /// <summary>Writes the lightning-and-bracket mark as a multi-size .ico.</summary>
-        public static void WriteLightningIco(string path, int[] sizes)
+        /// <summary>
+        /// App icon bitmap. Anti-aliased, and the bolt vertices are snapped to the
+        /// half-pixel grid so the slanted edges don't shimmer between sizes.
+        /// At 16 and 24 px (and 20, which is the 125% tray size) the bolt is scaled
+        /// up a little; below that the waist drops under two pixels and disappears.
+        /// </summary>
+        public static Bitmap RenderAppIcon(int size)
+        {
+            if (size < 1) size = 1;
+
+            Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.HighQuality;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+
+                // Opaque gradient first. The squircle alpha is applied afterwards
+                // from the corner geometry, so the silhouette does not depend on
+                // how GDI+ rasterises a path (libgdiplus and Windows disagree, and
+                // both bias the bottom-right corner).
+                using (LinearGradientBrush grad = new LinearGradientBrush(
+                    new RectangleF(-1f, -1f, size + 2f, size + 2f),
+                    AppLime, AppMint, LinearGradientMode.ForwardDiagonal))
+                {
+                    // Brush is larger than the plate so the end colour is not
+                    // wrapped back onto the first pixel. Gamma off: Windows GDI+
+                    // and libgdiplus then both blend in sRGB, matching the art.
+                    grad.GammaCorrection = false;
+                    g.FillRectangle(grad, -1, -1, size + 2, size + 2);
+                }
+
+                float k = BoltScaleFor(size);
+                PointF[] pts = new PointF[AppBoltUnit.Length];
+                for (int i = 0; i < AppBoltUnit.Length; i++)
+                {
+                    float x = 0.5f + (AppBoltUnit[i].X - 0.5f) * k;
+                    float y = 0.5f + (AppBoltUnit[i].Y - 0.5f) * k;
+                    pts[i] = new PointF(Snap(x * size), Snap(y * size));
+                }
+
+                using (GraphicsPath bolt = new GraphicsPath())
+                using (SolidBrush white = new SolidBrush(Color.White))
+                {
+                    bolt.AddPolygon(pts);
+                    g.FillPath(white, bolt);
+                }
+            }
+
+            ApplySquircleAlpha(bmp, size * AppCornerRatio);
+            return bmp;
+        }
+
+        /// <summary>Slightly bolder bolt at the sizes where a 1 px waist vanishes.</summary>
+        private static float BoltScaleFor(int size)
+        {
+            if (size <= 16) return 1.16f;
+            if (size <= 24) return 1.08f;
+            return 1f;
+        }
+
+        /// <summary>Snap to the half-pixel grid so anti-aliased edges stay symmetric.</summary>
+        private static float Snap(float value)
+        {
+            return (float)(Math.Round(value * 2.0) / 2.0);
+        }
+
+        /// <summary>
+        /// Writes the squircle into the alpha channel. 4×4 coverage samples, so the
+        /// four corners match and a 16 px icon still has a real radius.
+        /// </summary>
+        private static void ApplySquircleAlpha(Bitmap bmp, float radius)
+        {
+            int size = bmp.Width;
+            if (radius < 0.5f) radius = 0.5f;
+            if (radius > size / 2f) radius = size / 2f;
+
+            BitmapData data = bmp.LockBits(
+                new Rectangle(0, 0, size, size),
+                ImageLockMode.ReadWrite,
+                PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = data.Stride;
+                byte[] buf = new byte[stride * size];
+                Marshal.Copy(data.Scan0, buf, 0, buf.Length);
+
+                const int N = 4;
+                int samples = N * N;
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        int hit = 0;
+                        for (int sy = 0; sy < N; sy++)
+                        {
+                            for (int sx = 0; sx < N; sx++)
+                            {
+                                float px = x + (sx + 0.5f) / N;
+                                float py = y + (sy + 0.5f) / N;
+                                if (InsideRoundRect(px, py, size, radius)) hit++;
+                            }
+                        }
+
+                        buf[y * stride + x * 4 + 3] = (byte)(hit * 255 / samples);
+                    }
+                }
+
+                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+
+        /// <summary>Point-in-rounded-rect. The plate is the canvas, radius from the corner.</summary>
+        private static bool InsideRoundRect(float px, float py, float size, float radius)
+        {
+            float dx = px < radius ? radius - px : (px > size - radius ? px - (size - radius) : 0f);
+            float dy = py < radius ? radius - py : (py > size - radius ? py - (size - radius) : 0f);
+            if (dx == 0f && dy == 0f) return true;
+            if (dx == 0f) return py >= 0f && py <= size;
+            if (dy == 0f) return px >= 0f && px <= size;
+            return dx * dx + dy * dy <= radius * radius;
+        }
+
+        /// <summary>
+        /// Writes the app icon as a multi-size .ico. Every size is drawn on its own
+        /// canvas — the 16 px image is not a scaled 256.
+        /// </summary>
+        public static void WriteAppIco(string path, int[] sizes)
         {
             List<byte[]> images = new List<byte[]>();
 
             foreach (int size in sizes)
             {
-                using (Bitmap bmp = RenderLightning(size, true))
+                using (Bitmap bmp = RenderAppIcon(size))
                 using (MemoryStream ms = new MemoryStream())
                 {
                     bmp.Save(ms, ImageFormat.Png);
