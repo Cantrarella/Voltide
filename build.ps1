@@ -25,9 +25,10 @@ $gui  = Join-Path $root 'Voltide.exe'
 $test = Join-Path $root 'Voltide-Test.exe'
 $ico  = Join-Path $root 'app.ico'
 
-# app.ico is drawn by IconFactory (Voltide.exe --make-icon), one native bitmap
-# per size. /win32icon embeds that group so Explorer and the taskbar pick a
-# size instead of scaling a single image. Missing file: build still succeeds.
+# app.ico is the masked reference plate at 16,20,24,32,48,64,128,256.
+# /win32icon embeds that group so Explorer and the taskbar pick a size.
+# The same PNGs are manifest resources: the full-charge tray icon loads the
+# frame closest to the current DPI (24 px at 150%). Missing file: build still succeeds.
 $iconOpt = @()
 if (Test-Path $ico) { $iconOpt = @("/win32icon:$ico") }
 
@@ -55,6 +56,12 @@ if (Test-Path $fontDir) {
         Copy-Item $src $staged -Force
         $resOpt += "/resource:$staged,$($face.Embed)"
     }
+}
+
+$iconDir = Join-Path $root 'icons'
+foreach ($px in 16, 20, 24, 32, 48, 64, 128, 256) {
+    $frame = Join-Path $iconDir "app-icon-$px.png"
+    if (Test-Path $frame) { $resOpt += "/resource:${frame},appicon-$px.png" }
 }
 
 Write-Host "Compiling GUI ($($files.Count) files)..."

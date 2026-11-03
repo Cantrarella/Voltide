@@ -424,414 +424,116 @@ namespace Voltide.UI
 
         // --------------------------------------------------------------- app icon
         //
-        // Cool-grey frosted plate (#E9ECEF to #E3E8EE), mint outer rim plus a
-        // white inner highlight, soft shadow under a filled bolt. The bolt runs
-        // mint #A6F2C2, cyan #7FE0E8, sky #80C8FA. Drawn at 4x/8x and boxed down
-        // in premultiplied space so the corner fringe is the plate colour at a
-        // partial alpha, not a grey pixel. Outside the squircle: (0,0,0,0).
+        // The full-charge / window icon is the reference plate, masked and
+        // resampled. Frames live in icons/app-icon-*.png and are embedded as
+        // appicon-<size>.png. Tray digits and the no-device bolt are still drawn.
 
-        private const float AppCornerRatio = 0.22f;
+        private static readonly int[] AppIconSizes = { 16, 20, 24, 32, 48, 64, 128, 256 };
 
-        // Filled outline in icon space, clockwise from the top tip. Traced from
-        // the reference plate so every size shares one silhouette.
-        private static readonly PointF[] BoltFill = new PointF[]
-        {
-            new PointF(0.5851f, 0.1492f),
-            new PointF(0.6060f, 0.1522f),
-            new PointF(0.6209f, 0.1626f),
-            new PointF(0.6269f, 0.1746f),
-            new PointF(0.6269f, 0.2045f),
-            new PointF(0.5582f, 0.4015f),
-            new PointF(0.5671f, 0.4119f),
-            new PointF(0.6747f, 0.4119f),
-            new PointF(0.7179f, 0.4179f),
-            new PointF(0.7328f, 0.4269f),
-            new PointF(0.7433f, 0.4448f),
-            new PointF(0.7433f, 0.4746f),
-            new PointF(0.7164f, 0.5223f),
-            new PointF(0.5671f, 0.6926f),
-            new PointF(0.4671f, 0.8000f),
-            new PointF(0.4298f, 0.8239f),
-            new PointF(0.4089f, 0.8283f),
-            new PointF(0.3896f, 0.8224f),
-            new PointF(0.3776f, 0.8030f),
-            new PointF(0.3776f, 0.7806f),
-            new PointF(0.3866f, 0.7418f),
-            new PointF(0.4373f, 0.5971f),
-            new PointF(0.4388f, 0.5701f),
-            new PointF(0.4149f, 0.5626f),
-            new PointF(0.2881f, 0.5596f),
-            new PointF(0.2702f, 0.5507f),
-            new PointF(0.2582f, 0.5328f),
-            new PointF(0.2582f, 0.4985f),
-            new PointF(0.2687f, 0.4731f),
-            new PointF(0.3015f, 0.4269f),
-            new PointF(0.4910f, 0.2105f),
-            new PointF(0.5388f, 0.1671f),
-            new PointF(0.5807f, 0.1507f)
-        };
-
-        /// <summary>
-        /// Small-icon pixels for the DPI this process is aware of.
-        /// 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%.
-        /// </summary>
+        /// <summary>Tray pixels: 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%.</summary>
         public static int SystemSmallIconSize()
         {
-            int s = GetSystemMetrics(SM_CXSMICON);
+            int s = GetSystemMetrics(49);
             if (s < 16) s = 16;
             return s;
         }
 
-        /// <summary>
-        /// Large-icon pixels for the DPI this process is aware of.
-        /// 32 at 100%, 40 at 125%, 48 at 150%, 64 at 200%.
-        /// </summary>
+        /// <summary>Window icon pixels: 32 at 100%, 48 at 150%, 64 at 200%.</summary>
         public static int SystemLargeIconSize()
         {
-            int s = GetSystemMetrics(SM_CXICON);
+            int s = GetSystemMetrics(11);
             if (s < 32) s = 32;
             return s;
         }
 
-        /// <summary>App icon as a single-size HICON, drawn natively at <paramref name="size"/>.</summary>
+        /// <summary>Nearest embedded frame. Ties keep the larger one.</summary>
+        public static int ClosestAppIconSize(int size)
+        {
+            int best = AppIconSizes[0];
+            int bestDist = Abs(best - size);
+            for (int i = 1; i < AppIconSizes.Length; i++)
+            {
+                int s = AppIconSizes[i];
+                int dist = Abs(s - size);
+                if (dist < bestDist || (dist == bestDist && s > best))
+                {
+                    best = s;
+                    bestDist = dist;
+                }
+            }
+            return best;
+        }
+
+        private static int Abs(int v)
+        {
+            return v < 0 ? -v : v;
+        }
+
+        private static byte[] ReadAppIconPng(int size)
+        {
+            int s = ClosestAppIconSize(size);
+            string name = "appicon-" + s + ".png";
+            using (Stream embedded = System.Reflection.Assembly.GetExecutingAssembly()
+                       .GetManifestResourceStream(name))
+            {
+                if (embedded != null)
+                {
+                    byte[] buf = new byte[embedded.Length];
+                    int read = 0;
+                    while (read < buf.Length)
+                    {
+                        int n = embedded.Read(buf, read, buf.Length - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                    return buf;
+                }
+            }
+
+            string[] paths = new string[]
+            {
+                Path.Combine("icons", "app-icon-" + s + ".png"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icons", "app-icon-" + s + ".png")
+            };
+            for (int i = 0; i < paths.Length; i++)
+            {
+                if (File.Exists(paths[i])) return File.ReadAllBytes(paths[i]);
+            }
+            throw new FileNotFoundException("Missing app icon frame " + name);
+        }
+
+        /// <summary>Full-charge tray icon and the window icon, from the embedded frame.</summary>
         public static Icon ToAppIcon(int size)
         {
-            if (size < 1) size = 1;
             using (Bitmap bmp = RenderAppIcon(size))
             {
                 return BitmapToIcon(bmp);
             }
         }
 
-        /// <summary>
-        /// App icon bitmap, drawn at <paramref name="size"/> (never a downscale of
-        /// a bigger icon). The plate, rim and bolt are rasterised on a 4× or 8×
-        /// grid and box-filtered in premultiplied space.
-        /// </summary>
+        /// <summary>App icon bitmap: the embedded frame closest to <paramref name="size"/>.</summary>
         public static Bitmap RenderAppIcon(int size)
         {
-            if (size < 1) size = 1;
-
-            int ss = size <= 32 ? 8 : 4;
-            int big = size * ss;
-            byte[] hi = new byte[big * big * 4];
-            PaintSupersampled(hi, big, size, ss);
-
-            Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-            DownsamplePremultiplied(hi, big, size, ss, bmp);
-            return bmp;
-        }
-
-        /// <summary>Signed distance to the rounded square. Negative is inside.</summary>
-        private static float RoundRectDistance(float px, float py, float size, float radius)
-        {
-            float half = size * 0.5f;
-            float cx = px - half;
-            float cy = py - half;
-            float qx = Math.Abs(cx) - (half - radius);
-            float qy = Math.Abs(cy) - (half - radius);
-            float ox = qx > 0f ? qx : 0f;
-            float oy = qy > 0f ? qy : 0f;
-            float outside = (float)Math.Sqrt(ox * ox + oy * oy);
-            float inner = Math.Max(qx, qy);
-            if (inner > 0f) inner = 0f;
-            return outside + inner - radius;
-        }
-
-        // 16 and 20 are hand-set so the notch stays open and no stray pixel hangs
-        // off the lower tip. '#' is bolt. Same silhouette as the traced fill.
-        private const string Bolt16 =
-            "................" +
-            "................" +
-            "........###....." +
-            ".......####....." +
-            "......####......" +
-            ".....#####......" +
-            "....######......" +
-            "...##########..." +
-            "....#########..." +
-            "........#####..." +
-            ".......####....." +
-            "......####......" +
-            ".....###........" +
-            ".....##........." +
-            "................" +
-            "................";
-
-        private const string Bolt20 =
-            "...................." +
-            "...................." +
-            "..........###......." +
-            ".........####......." +
-            "........####........" +
-            ".......#####........" +
-            "......######........" +
-            ".....######........." +
-            "....###########....." +
-            "...############....." +
-            "....###########....." +
-            ".........######....." +
-            "........#####......." +
-            ".......#####........" +
-            "......####.........." +
-            ".....###............" +
-            ".....##............." +
-            "...................." +
-            "...................." +
-            "....................";
-
-        private static void PaintSupersampled(byte[] hi, int big, int size, int ss)
-        {
-            float radius = size * AppCornerRatio;
-            // 16/20/24/32: one light-mint pixel. The white inner lip only appears
-            // once the plate is large enough that a second line does not box it in.
-            float mintW = size <= 32 ? 1f : size * 0.012f;
-            float whiteW = size <= 32 ? 0f : size * 0.007f;
-            float grow = size <= 32 ? 1.10f : 1f;
-            bool hand = size == 16 || size == 20;
-            string handGrid = size == 16 ? Bolt16 : Bolt20;
-
-            for (int y = 0; y < big; y++)
+            byte[] png = ReadAppIconPng(size);
+            using (MemoryStream ms = new MemoryStream(png))
+            using (Image src = Image.FromStream(ms))
             {
-                float fy = (y + 0.5f) / ss;
-                float ny = fy / size;
-                for (int x = 0; x < big; x++)
+                Bitmap copy = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+                using (Graphics g = Graphics.FromImage(copy))
                 {
-                    float fx = (x + 0.5f) / ss;
-                    float nx = fx / size;
-                    float sd = RoundRectDistance(fx, fy, size, radius);
-                    int i = (y * big + x) * 4;
-                    if (sd > 0f)
-                    {
-                        hi[i] = hi[i + 1] = hi[i + 2] = hi[i + 3] = 0;
-                        continue;
-                    }
-
-                    float dist = -sd;
-                    int r, g, b;
-                    PlateRgb(ny, dist, mintW, whiteW, out r, out g, out b);
-
-                    bool bolt;
-                    bool shadow = false;
-                    if (hand)
-                    {
-                        int gx = (int)fx;
-                        int gy = (int)fy;
-                        if (gx < 0) gx = 0;
-                        if (gy < 0) gy = 0;
-                        if (gx >= size) gx = size - 1;
-                        if (gy >= size) gy = size - 1;
-                        bolt = handGrid[gy * size + gx] == '#';
-                        int sx = gx - 1;
-                        int sy = gy - 1;
-                        if (!bolt && sx >= 0 && sy >= 0 && handGrid[sy * size + sx] == '#')
-                            shadow = true;
-                    }
-                    else
-                    {
-                        float bx = 0.5f + (nx - 0.5f) / grow;
-                        float by = 0.5f + (ny - 0.5f) / grow;
-                        bolt = PointInBolt(bx, by);
-                        float shx = 0.5f + (nx - 0.008f - 0.5f) / grow;
-                        float shy = 0.5f + (ny - 0.014f - 0.5f) / grow;
-                        shadow = !bolt && PointInBolt(shx, shy);
-                    }
-
-                    // Faint cool shadow, not a grey slab.
-                    if (shadow)
-                    {
-                        int k = size <= 32 ? 8 : 12;
-                        r = (r * (100 - k) + 176 * k) / 100;
-                        g = (g * (100 - k) + 196 * k) / 100;
-                        b = (b * (100 - k) + 208 * k) / 100;
-                    }
-
-                    if (bolt)
-                    {
-                        BoltRgb(nx, ny, out r, out g, out b);
-                    }
-
-                    hi[i] = (byte)b;
-                    hi[i + 1] = (byte)g;
-                    hi[i + 2] = (byte)r;
-                    hi[i + 3] = 255;
+                    g.DrawImage(src, 0, 0, src.Width, src.Height);
                 }
+                return copy;
             }
         }
 
-        /// <summary>Cool grey body, mint outer lip, white inner lip, darker foot.</summary>
-        private static void PlateRgb(float ny, float dist, float mintW, float whiteW,
-            out int r, out int g, out int b)
-        {
-            float v = ny;
-            if (v < 0f) v = 0f;
-            if (v > 1f) v = 1f;
-            // #E9ECEF at the top, #E3E8EE at the bottom.
-            r = (int)(0xE9 + (0xE3 - 0xE9) * v);
-            g = (int)(0xEC + (0xE8 - 0xEC) * v);
-            b = (int)(0xEF + (0xEE - 0xEF) * v);
-
-            if (v > 0.62f)
-            {
-                float u = (v - 0.62f) / 0.38f;
-                // Soft inner shadow along the lower curve.
-                float k = u * (dist < mintW + whiteW + 3f ? 0.72f : 0.42f);
-                r = (int)(r + (0xC5 - r) * k);
-                g = (int)(g + (0xCC - g) * k);
-                b = (int)(b + (0xD2 - b) * k);
-            }
-
-            // Keep the outermost sliver the plate colour. The coverage fringe is
-            // then that colour at partial alpha, not a mint or grey pixel.
-            const float lip = 0.45f;
-            if (dist >= lip && dist < lip + mintW)
-            {
-                r = 0xC5; g = 0xE6; b = 0xD6;
-            }
-            else if (dist >= lip + mintW && dist < lip + mintW + whiteW)
-            {
-                r = 0xFB; g = 0xFF; b = 0xFC;
-            }
-        }
-
-        /// <summary>Mint, then cyan, then sky, across the bolt.</summary>
-        private static void BoltRgb(float nx, float ny, out int r, out int g, out int b)
-        {
-            // Bolt-relative height. The upper third stays mint (#A6F2C2), the
-            // middle crosses cyan (#7FE0E8), the lower tip is sky (#80C8FA).
-            float u = (ny - 0.15f) / 0.68f;
-            if (u < 0f) u = 0f;
-            if (u > 1f) u = 1f;
-            float t;
-            if (u < 0.34f) t = u / 0.34f * 0.18f;
-            else if (u < 0.58f) t = 0.18f + (u - 0.34f) / 0.24f * 0.32f;
-            else t = 0.50f + (u - 0.58f) / 0.42f * 0.50f;
-            int r1 = 0xA6, g1 = 0xF2, b1 = 0xC2;
-            int r2 = 0x7F, g2 = 0xE0, b2 = 0xE8;
-            int r3 = 0x80, g3 = 0xC8, b3 = 0xFA;
-            if (t < 0.5f)
-            {
-                float k = t / 0.5f;
-                r = (int)(r1 + (r2 - r1) * k);
-                g = (int)(g1 + (g2 - g1) * k);
-                b = (int)(b1 + (b2 - b1) * k);
-            }
-            else
-            {
-                float k = (t - 0.5f) / 0.5f;
-                r = (int)(r2 + (r3 - r2) * k);
-                g = (int)(g2 + (g3 - g2) * k);
-                b = (int)(b2 + (b3 - b2) * k);
-            }
-        }
-
-        private static bool PointInBolt(float x, float y)
-        {
-            bool inside = false;
-            int n = BoltFill.Length;
-            int j = n - 1;
-            for (int i = 0; i < n; i++)
-            {
-                float yi = BoltFill[i].Y;
-                float yj = BoltFill[j].Y;
-                if ((yi > y) != (yj > y))
-                {
-                    float xi = BoltFill[i].X;
-                    float xj = BoltFill[j].X;
-                    float xint = (xj - xi) * (y - yi) / (yj - yi) + xi;
-                    if (x < xint) inside = !inside;
-                }
-                j = i;
-            }
-            return inside;
-        }
-
-        /// <summary>
-        /// Box-filter in premultiplied space, then store straight alpha so a
-        /// half-covered edge stays the plate colour at half alpha instead of grey.
-        /// </summary>
-        private static void DownsamplePremultiplied(byte[] hi, int big, int size, int ss, Bitmap bmp)
-        {
-            int n = ss * ss;
-            BitmapData data = bmp.LockBits(
-                new Rectangle(0, 0, size, size),
-                ImageLockMode.WriteOnly,
-                PixelFormat.Format32bppArgb);
-            try
-            {
-                int stride = data.Stride;
-                byte[] buf = new byte[stride * size];
-                for (int y = 0; y < size; y++)
-                {
-                    for (int x = 0; x < size; x++)
-                    {
-                        int pr = 0, pg = 0, pb = 0, pa = 0;
-                        int y0 = y * ss;
-                        int x0 = x * ss;
-                        for (int sy = 0; sy < ss; sy++)
-                        {
-                            int row = (y0 + sy) * big;
-                            for (int sx = 0; sx < ss; sx++)
-                            {
-                                int i = (row + x0 + sx) * 4;
-                                int a = hi[i + 3];
-                                pb += hi[i] * a;
-                                pg += hi[i + 1] * a;
-                                pr += hi[i + 2] * a;
-                                pa += a;
-                            }
-                        }
-
-                        int o = y * stride + x * 4;
-                        // Keep the real coverage, including the two or three partial
-                        // pixels that round a 16 px corner. Only exact misses go clear.
-                        if (pa == 0)
-                        {
-                            buf[o] = buf[o + 1] = buf[o + 2] = buf[o + 3] = 0;
-                            continue;
-                        }
-
-                        int A = pa / n;
-                        if (A > 255) A = 255;
-                        int R = pr / pa;
-                        int G = pg / pa;
-                        int B = pb / pa;
-                        if (R > 255) R = 255;
-                        if (G > 255) G = 255;
-                        if (B > 255) B = 255;
-                        buf[o] = (byte)B;
-                        buf[o + 1] = (byte)G;
-                        buf[o + 2] = (byte)R;
-                        buf[o + 3] = (byte)A;
-                    }
-                }
-                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
-            }
-            finally
-            {
-                bmp.UnlockBits(data);
-            }
-        }
-
-
-        /// <summary>
-        /// Writes the app icon as a multi-size .ico. Every size is drawn on its own
-        /// canvas — the 16 px image is not a scaled 256.
-        /// </summary>
         public static void WriteAppIco(string path, int[] sizes)
         {
             List<byte[]> images = new List<byte[]>();
-
             foreach (int size in sizes)
             {
-                using (Bitmap bmp = RenderAppIcon(size))
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    bmp.Save(ms, ImageFormat.Png);
-                    images.Add(ms.ToArray());
-                }
+                images.Add(ReadAppIconPng(size));
             }
-
             WriteIcoBytes(path, sizes, images);
         }
 
