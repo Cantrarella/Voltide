@@ -424,8 +424,10 @@ namespace Voltide.UI
 
         /// <summary>
         /// Swaps the tray icon for a live battery digit: the lowest online device's
-        /// percentage, framed by a corner bracket. Falls back to the logo when no
-        /// device is reporting. Runs on the UI thread after each refresh.
+        /// percentage, framed by a corner bracket. No device keeps the transparent
+        /// lightning glyph. 100% uses the app icon, drawn at the tray's real pixel
+        /// size (16/20/24/32) so high DPI does not scale a single bitmap. Runs on
+        /// the UI thread after each refresh.
         ///
         /// The old icon is disposed before the swap — NotifyIcon copies the handle, so
         /// leaving the previous Icon for the GC leaks a GDI object per refresh.
@@ -451,7 +453,7 @@ namespace Voltide.UI
 
             Icon next;
             if (percent < 0) next = IconFactory.ToLightningIcon(32);
-            else if (percent >= 100) next = IconFactory.ToLightningIcon(32);
+            else if (percent >= 100) next = IconFactory.ToAppIcon(IconFactory.SystemSmallIconSize());
             else next = IconFactory.ToBatteryIcon(percent, 32);
 
             Icon previous = _tray.Icon;

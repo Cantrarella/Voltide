@@ -128,6 +128,25 @@ namespace Voltide.UI
         /// <summary>Private message the frame clock posts to wake the UI thread.</summary>
         private const int WmFrame = 0x800A;
 
+        private const int WM_GETICON = 0x007F;
+        private const int ICON_BIG = 1;
+
+        // Native-size window icons. Big is also assigned to Form.Icon (and disposed
+        // with the form); small is what WM_GETICON returns for the caption.
+        private Icon _windowIconBig;
+        private Icon _windowIconSmall;
+
+        private void ApplyWindowIcon()
+        {
+            int big = IconFactory.SystemLargeIconSize();
+            int small = IconFactory.SystemSmallIconSize();
+            _windowIconBig = IconFactory.ToAppIcon(big);
+            _windowIconSmall = (small == big)
+                ? _windowIconBig
+                : IconFactory.ToAppIcon(small);
+            Icon = _windowIconBig;
+        }
+
         /// <summary>Per-device animation state. One object instead of four parallel maps.</summary>
         private class CardAnim
         {
@@ -188,6 +207,10 @@ namespace Voltide.UI
 
             // The timer is NOT started here. It runs only while something is
             // actually moving, which is what keeps a visible panel at 0% CPU.
+
+            // Alt-Tab and the window icon. The exe's embedded icon group is what
+            // Explorer and a pinned taskbar button use; this is the live window.
+            ApplyWindowIcon();
         }
 
         // ---------------------------------------------------------------- api
@@ -953,6 +976,15 @@ namespace Voltide.UI
                 // The frame thread is a background thread, so it dies with the
                 // process; just make sure it stops posting before the handle goes.
                 try { StopAnimating(); } catch { }
+
+                // Form.Dispose releases Icon, which is _windowIconBig. The small
+                // one is a second HICON and has to go here.
+                if (_windowIconSmall != null && !object.ReferenceEquals(_windowIconSmall, _windowIconBig))
+                {
+                    _windowIconSmall.Dispose();
+                }
+                _windowIconSmall = null;
+                _windowIconBig = null;
             }
             base.Dispose(disposing);
         }
@@ -963,6 +995,20 @@ namespace Voltide.UI
         /// </summary>
         protected override void WndProc(ref Message m)
         {
+            // Windows asks for the big and small icons separately. Handing back the
+            // size that matches SM_CXICON / SM_CXSMICON keeps Alt-Tab and the caption
+            // sharp at 125/150/200% instead of stretching one 32 px bitmap.
+            if (m.Msg == WM_GETICON)
+            {
+                int kind = unchecked((int)m.WParam.ToInt64());
+                Icon pick = (kind == ICON_BIG) ? _windowIconBig : _windowIconSmall;
+                if (pick != null)
+                {
+                    m.Result = pick.Handle;
+                    return;
+                }
+            }
+
             if (m.Msg == WmFrame) { OnTick(); return; }
 
             if (m.Msg == 0x020A)   // WM_MOUSEWHEEL
