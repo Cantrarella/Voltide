@@ -424,368 +424,116 @@ namespace Voltide.UI
 
         // --------------------------------------------------------------- app icon
         //
-        // Frosted-glass squircle: near-white, faint mint-to-blue vertical gradient,
-        // thin bright inner rim. A thick lightning bolt with round caps and joins
-        // sits on top, mint (#7EE8B0) at the top-left to cyan (#7CC8F8) at the
-        // bottom-right. No drop shadow — pixels outside the squircle stay alpha 0.
-        // This is the exe / taskbar / Alt-Tab icon, and the tray glyph at 100%.
+        // The full-charge / window icon is the reference plate, masked and
+        // resampled. Frames live in icons/app-icon-*.png and are embedded as
+        // appicon-<size>.png. Tray digits and the no-device bolt are still drawn.
 
-        private static readonly Color BoltMint = Color.FromArgb(255, 0x7E, 0xE8, 0xB0);
-        private static readonly Color BoltCyan = Color.FromArgb(255, 0x7C, 0xC8, 0xF8);
-        // Deeper ends used only at tray sizes, where the spec colours wash out.
-        private static readonly Color BoltMintDeep = Color.FromArgb(255, 0x1F, 0xC4, 0x84);
-        private static readonly Color BoltCyanDeep = Color.FromArgb(255, 0x1E, 0x96, 0xEE);
+        private static readonly int[] AppIconSizes = { 16, 20, 24, 32, 48, 64, 128, 256 };
 
-        private const float AppCornerRatio = 0.23f;
-
-        // Spine of the bolt in icon space. Round caps extend past these points,
-        // so the tips land inside the glass rather than on the rim.
-        private static readonly PointF[] BoltSpine = new PointF[]
-        {
-            new PointF(0.585f, 0.21f),
-            new PointF(0.340f, 0.50f),
-            new PointF(0.730f, 0.47f),
-            new PointF(0.420f, 0.78f)
-        };
-
-        /// <summary>
-        /// Small-icon pixels for the DPI this process is aware of.
-        /// 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%.
-        /// </summary>
+        /// <summary>Tray pixels: 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%.</summary>
         public static int SystemSmallIconSize()
         {
-            int s = GetSystemMetrics(SM_CXSMICON);
+            int s = GetSystemMetrics(49);
             if (s < 16) s = 16;
             return s;
         }
 
-        /// <summary>
-        /// Large-icon pixels for the DPI this process is aware of.
-        /// 32 at 100%, 40 at 125%, 48 at 150%, 64 at 200%.
-        /// </summary>
+        /// <summary>Window icon pixels: 32 at 100%, 48 at 150%, 64 at 200%.</summary>
         public static int SystemLargeIconSize()
         {
-            int s = GetSystemMetrics(SM_CXICON);
+            int s = GetSystemMetrics(11);
             if (s < 32) s = 32;
             return s;
         }
 
-        /// <summary>App icon as a single-size HICON, drawn natively at <paramref name="size"/>.</summary>
+        /// <summary>Nearest embedded frame. Ties keep the larger one.</summary>
+        public static int ClosestAppIconSize(int size)
+        {
+            int best = AppIconSizes[0];
+            int bestDist = Abs(best - size);
+            for (int i = 1; i < AppIconSizes.Length; i++)
+            {
+                int s = AppIconSizes[i];
+                int dist = Abs(s - size);
+                if (dist < bestDist || (dist == bestDist && s > best))
+                {
+                    best = s;
+                    bestDist = dist;
+                }
+            }
+            return best;
+        }
+
+        private static int Abs(int v)
+        {
+            return v < 0 ? -v : v;
+        }
+
+        private static byte[] ReadAppIconPng(int size)
+        {
+            int s = ClosestAppIconSize(size);
+            string name = "appicon-" + s + ".png";
+            using (Stream embedded = System.Reflection.Assembly.GetExecutingAssembly()
+                       .GetManifestResourceStream(name))
+            {
+                if (embedded != null)
+                {
+                    byte[] buf = new byte[embedded.Length];
+                    int read = 0;
+                    while (read < buf.Length)
+                    {
+                        int n = embedded.Read(buf, read, buf.Length - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                    return buf;
+                }
+            }
+
+            string[] paths = new string[]
+            {
+                Path.Combine("icons", "app-icon-" + s + ".png"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icons", "app-icon-" + s + ".png")
+            };
+            for (int i = 0; i < paths.Length; i++)
+            {
+                if (File.Exists(paths[i])) return File.ReadAllBytes(paths[i]);
+            }
+            throw new FileNotFoundException("Missing app icon frame " + name);
+        }
+
+        /// <summary>Full-charge tray icon and the window icon, from the embedded frame.</summary>
         public static Icon ToAppIcon(int size)
         {
-            if (size < 1) size = 1;
             using (Bitmap bmp = RenderAppIcon(size))
             {
                 return BitmapToIcon(bmp);
             }
         }
 
-        /// <summary>
-        /// App icon bitmap, drawn at <paramref name="size"/> (never a downscale).
-        /// The glass and its alpha are written from the rounded-rect distance, so
-        /// every sample that falls outside the squircle is RGBA 0 — including the
-        /// four corners. The bolt is a round-capped stroke, so the tips stay soft.
-        /// </summary>
+        /// <summary>App icon bitmap: the embedded frame closest to <paramref name="size"/>.</summary>
         public static Bitmap RenderAppIcon(int size)
         {
-            if (size < 1) size = 1;
-
-            Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-            PaintGlass(bmp, size);
-            PaintBolt(bmp, size);
-            // The stroke is anti-aliased and can leave a faint fringe past the
-            // rim. Anything geometrically outside the squircle is cleared again.
-            ClearOutsideSquircle(bmp, size * AppCornerRatio);
-            return bmp;
-        }
-
-        private static bool SmallIcon(int size)
-        {
-            return size <= 32;
-        }
-
-        private static float BoltGrow(int size)
-        {
-            // Wider span at tray sizes, but not so wide the arms collide.
-            if (size <= 16) return 1.06f;
-            if (size <= 24) return 1.04f;
-            if (size <= 32) return 1.02f;
-            return 1f;
-        }
-
-        private static float BoltThickness(int size)
-        {
-            // Thick enough to read, thin enough that the notch stays open.
-            if (size <= 16) return size * 0.20f;
-            if (size <= 20) return size * 0.195f;
-            if (size <= 24) return size * 0.19f;
-            if (size <= 32) return size * 0.185f;
-            return size * 0.175f;
-        }
-
-        private static Color LerpColor(Color a, Color b, float t)
-        {
-            if (t < 0f) t = 0f;
-            if (t > 1f) t = 1f;
-            return Color.FromArgb(
-                255,
-                (int)(a.R + (b.R - a.R) * t),
-                (int)(a.G + (b.G - a.G) * t),
-                (int)(a.B + (b.B - a.B) * t));
-        }
-
-        private static Color BoltColorMint(int size)
-        {
-            if (!SmallIcon(size)) return BoltMint;
-            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
-            return LerpColor(BoltMint, BoltMintDeep, t);
-        }
-
-        private static Color BoltColorCyan(int size)
-        {
-            if (!SmallIcon(size)) return BoltCyan;
-            float t = size <= 16 ? 0.62f : size <= 20 ? 0.50f : size <= 24 ? 0.40f : 0.28f;
-            return LerpColor(BoltCyan, BoltCyanDeep, t);
-        }
-
-        /// <summary>Signed distance to the rounded square. Negative is inside.</summary>
-        private static float RoundRectDistance(float px, float py, float size, float radius)
-        {
-            float half = size * 0.5f;
-            float cx = px - half;
-            float cy = py - half;
-            float qx = Math.Abs(cx) - (half - radius);
-            float qy = Math.Abs(cy) - (half - radius);
-            float ox = qx > 0f ? qx : 0f;
-            float oy = qy > 0f ? qy : 0f;
-            float outside = (float)Math.Sqrt(ox * ox + oy * oy);
-            float inner = Math.Max(qx, qy);
-            if (inner > 0f) inner = 0f;
-            return outside + inner - radius;
-        }
-
-        private static void PaintGlass(Bitmap bmp, int size)
-        {
-            float radius = size * AppCornerRatio;
-            if (radius < 1f) radius = 1f;
-            if (radius > size * 0.5f) radius = size * 0.5f;
-
-            bool small = SmallIcon(size);
-            int baseA = small ? 248 : 230;
-            Color top = small
-                ? Color.FromArgb(baseA, 206, 242, 226)
-                : Color.FromArgb(baseA, 246, 252, 249);
-            Color bot = small
-                ? Color.FromArgb(baseA, 188, 216, 244)
-                : Color.FromArgb(baseA, 226, 238, 250);
-            float rim = small ? Math.Max(1.25f, size * 0.09f) : Math.Max(1.25f, size * 0.028f);
-            float rimStrength = small ? 0.95f : 0.88f;
-            float sheen = small ? 0.20f : 0.12f;
-
-            BitmapData data = bmp.LockBits(
-                new Rectangle(0, 0, size, size),
-                ImageLockMode.WriteOnly,
-                PixelFormat.Format32bppArgb);
-            try
+            byte[] png = ReadAppIconPng(size);
+            using (MemoryStream ms = new MemoryStream(png))
+            using (Image src = Image.FromStream(ms))
             {
-                int stride = data.Stride;
-                byte[] buf = new byte[stride * size];
-                const int N = 4;
-                int samples = N * N;
-
-                for (int y = 0; y < size; y++)
+                Bitmap copy = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+                using (Graphics g = Graphics.FromImage(copy))
                 {
-                    for (int x = 0; x < size; x++)
-                    {
-                        int hit = 0;
-                        for (int sy = 0; sy < N; sy++)
-                        {
-                            float py = y + (sy + 0.5f) / N;
-                            for (int sx = 0; sx < N; sx++)
-                            {
-                                float px = x + (sx + 0.5f) / N;
-                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
-                            }
-                        }
-
-                        int i = y * stride + x * 4;
-                        if (hit == 0)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                            continue;
-                        }
-
-                        float cov = hit / (float)samples;
-                        float v = (y + 0.5f) / size;
-                        int r = (int)(top.R + (bot.R - top.R) * v);
-                        int g = (int)(top.G + (bot.G - top.G) * v);
-                        int b = (int)(top.B + (bot.B - top.B) * v);
-
-                        if (v < 0.42f)
-                        {
-                            float u = (1f - v / 0.42f) * sheen;
-                            r = (int)(r + (255 - r) * u);
-                            g = (int)(g + (255 - g) * u);
-                            b = (int)(b + (255 - b) * u);
-                        }
-
-                        float sd = RoundRectDistance(x + 0.5f, y + 0.5f, size, radius);
-                        float distIn = -sd;
-                        if (distIn >= 0f && distIn < rim)
-                        {
-                            float u = 1f - distIn / rim;
-                            u = u * u * rimStrength;
-                            r = (int)(r + (255 - r) * u);
-                            g = (int)(g + (255 - g) * u);
-                            b = (int)(b + (255 - b) * u);
-                        }
-
-                        int a = (int)(baseA * cov + 0.5f);
-                        if (a < 1)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                            continue;
-                        }
-                        if (a > 255) a = 255;
-                        if (r < 0) r = 0; if (r > 255) r = 255;
-                        if (g < 0) g = 0; if (g > 255) g = 255;
-                        if (b < 0) b = 0; if (b > 255) b = 255;
-                        buf[i] = (byte)b;
-                        buf[i + 1] = (byte)g;
-                        buf[i + 2] = (byte)r;
-                        buf[i + 3] = (byte)a;
-                    }
+                    g.DrawImage(src, 0, 0, src.Width, src.Height);
                 }
-
-                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
-            }
-            finally
-            {
-                bmp.UnlockBits(data);
+                return copy;
             }
         }
 
-        private static void PaintBolt(Bitmap bmp, int size)
-        {
-            float grow = BoltGrow(size);
-            float thick = BoltThickness(size);
-            if (thick < 1.6f) thick = 1.6f;
-
-            PointF[] pts = new PointF[BoltSpine.Length];
-            for (int i = 0; i < BoltSpine.Length; i++)
-            {
-                float x = 0.5f + (BoltSpine[i].X - 0.5f) * grow;
-                float y = 0.5f + (BoltSpine[i].Y - 0.5f) * grow;
-                pts[i] = new PointF(x * size, y * size);
-            }
-
-            using (Graphics g = Graphics.FromImage(bmp))
-            {
-                g.SmoothingMode = SmoothingMode.HighQuality;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-                g.CompositingMode = CompositingMode.SourceOver;
-
-                // Brush larger than the stroke so the end colour is not wrapped
-                // back onto the first pixel. Gamma off: Windows and libgdiplus match.
-                using (LinearGradientBrush brush = new LinearGradientBrush(
-                    new RectangleF(size * 0.12f, size * 0.06f, size * 0.76f, size * 0.88f),
-                    BoltColorMint(size), BoltColorCyan(size),
-                    LinearGradientMode.ForwardDiagonal))
-                using (Pen pen = new Pen(brush, thick))
-                {
-                    brush.GammaCorrection = false;
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    pen.LineJoin = LineJoin.Round;
-                    g.DrawLines(pen, pts);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Forces every sample outside the squircle to transparent black.
-        /// Partial edge pixels keep their coverage; the four corners do not.
-        /// </summary>
-        private static void ClearOutsideSquircle(Bitmap bmp, float radius)
-        {
-            int size = bmp.Width;
-            if (radius < 1f) radius = 1f;
-
-            BitmapData data = bmp.LockBits(
-                new Rectangle(0, 0, size, size),
-                ImageLockMode.ReadWrite,
-                PixelFormat.Format32bppArgb);
-            try
-            {
-                int stride = data.Stride;
-                byte[] buf = new byte[stride * size];
-                Marshal.Copy(data.Scan0, buf, 0, buf.Length);
-
-                const int N = 4;
-                int samples = N * N;
-                for (int y = 0; y < size; y++)
-                {
-                    for (int x = 0; x < size; x++)
-                    {
-                        int hit = 0;
-                        for (int sy = 0; sy < N; sy++)
-                        {
-                            float py = y + (sy + 0.5f) / N;
-                            for (int sx = 0; sx < N; sx++)
-                            {
-                                float px = x + (sx + 0.5f) / N;
-                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
-                            }
-                        }
-
-                        int i = y * stride + x * 4;
-                        if (hit == 0)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                            continue;
-                        }
-                        if (hit == samples) continue;
-
-                        int a = buf[i + 3] * hit / samples;
-                        if (a < 1)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                        }
-                        else
-                        {
-                            buf[i + 3] = (byte)a;
-                        }
-                    }
-                }
-
-                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
-            }
-            finally
-            {
-                bmp.UnlockBits(data);
-            }
-        }
-
-        /// <summary>
-        /// Writes the app icon as a multi-size .ico. Every size is drawn on its own
-        /// canvas — the 16 px image is not a scaled 256.
-        /// </summary>
         public static void WriteAppIco(string path, int[] sizes)
         {
             List<byte[]> images = new List<byte[]>();
-
             foreach (int size in sizes)
             {
-                using (Bitmap bmp = RenderAppIcon(size))
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    bmp.Save(ms, ImageFormat.Png);
-                    images.Add(ms.ToArray());
-                }
+                images.Add(ReadAppIconPng(size));
             }
-
             WriteIcoBytes(path, sizes, images);
         }
 

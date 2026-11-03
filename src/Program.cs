@@ -149,7 +149,7 @@ namespace Voltide
         private static void MakeIcon(string outPath)
         {
             SetProcessDPIAware();
-            int[] sizes = new int[] { 16, 24, 32, 48, 64, 128, 256 };
+            int[] sizes = new int[] { 16, 20, 24, 32, 48, 64, 128, 256 };
             UI.IconFactory.WriteAppIco(outPath, sizes);
             Console.WriteLine("wrote " + outPath);
         }
