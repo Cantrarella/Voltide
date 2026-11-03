@@ -543,39 +543,39 @@ namespace Voltide.UI
         private const string Bolt16 =
             "................" +
             "................" +
-            ".........#......" +
-            "........##......" +
-            ".......###......" +
-            "......###......." +
-            ".....####......." +
-            "....########...." +
-            "....#######....." +
-            ".......###......" +
-            ".......###......" +
-            "......###......." +
-            "......##........" +
-            "................" +
+            "........###....." +
+            ".......####....." +
+            "......####......" +
+            ".....#####......" +
+            "....######......" +
+            "...##########..." +
+            "....#########..." +
+            "........#####..." +
+            ".......####....." +
+            "......####......" +
+            ".....###........" +
+            ".....##........." +
             "................" +
             "................";
 
         private const string Bolt20 =
             "...................." +
             "...................." +
-            "...................." +
-            "...........##......." +
-            "..........##........" +
-            ".........###........" +
-            "........####........" +
-            ".......####........." +
-            "......#########....." +
-            ".....##########....." +
-            ".....#########......" +
-            ".........####......." +
+            "..........###......." +
             ".........####......." +
             "........####........" +
-            "........###........." +
-            "........##.........." +
-            "...................." +
+            ".......#####........" +
+            "......######........" +
+            ".....######........." +
+            "....###########....." +
+            "...############....." +
+            "....###########....." +
+            ".........######....." +
+            "........#####......." +
+            ".......#####........" +
+            "......####.........." +
+            ".....###............" +
+            ".....##............." +
             "...................." +
             "...................." +
             "....................";
@@ -583,8 +583,11 @@ namespace Voltide.UI
         private static void PaintSupersampled(byte[] hi, int big, int size, int ss)
         {
             float radius = size * AppCornerRatio;
-            float mintW = size >= 64 ? size * 0.013f : 1.05f;
-            float whiteW = size >= 64 ? size * 0.008f : (size >= 24 ? 0.9f : 0f);
+            // 16/20/24/32: one light-mint pixel. The white inner lip only appears
+            // once the plate is large enough that a second line does not box it in.
+            float mintW = size <= 32 ? 1f : size * 0.012f;
+            float whiteW = size <= 32 ? 0f : size * 0.007f;
+            float grow = size <= 32 ? 1.10f : 1f;
             bool hand = size == 16 || size == 20;
             string handGrid = size == 16 ? Bolt16 : Bolt20;
 
@@ -609,6 +612,7 @@ namespace Voltide.UI
                     PlateRgb(ny, dist, mintW, whiteW, out r, out g, out b);
 
                     bool bolt;
+                    bool shadow = false;
                     if (hand)
                     {
                         int gx = (int)fx;
@@ -618,18 +622,28 @@ namespace Voltide.UI
                         if (gx >= size) gx = size - 1;
                         if (gy >= size) gy = size - 1;
                         bolt = handGrid[gy * size + gx] == '#';
+                        int sx = gx - 1;
+                        int sy = gy - 1;
+                        if (!bolt && sx >= 0 && sy >= 0 && handGrid[sy * size + sx] == '#')
+                            shadow = true;
                     }
                     else
                     {
-                        bolt = PointInBolt(nx, ny);
+                        float bx = 0.5f + (nx - 0.5f) / grow;
+                        float by = 0.5f + (ny - 0.5f) / grow;
+                        bolt = PointInBolt(bx, by);
+                        float shx = 0.5f + (nx - 0.008f - 0.5f) / grow;
+                        float shy = 0.5f + (ny - 0.014f - 0.5f) / grow;
+                        shadow = !bolt && PointInBolt(shx, shy);
                     }
 
-                    // Shadow sits down-right of the bolt, on the plate only.
-                    if (!bolt && PointInBolt(nx - 0.012f, ny - 0.022f))
+                    // Faint cool shadow, not a grey slab.
+                    if (shadow)
                     {
-                        r = (r * 62 + 136 * 38) / 100;
-                        g = (g * 62 + 150 * 38) / 100;
-                        b = (b * 62 + 162 * 38) / 100;
+                        int k = size <= 32 ? 8 : 12;
+                        r = (r * (100 - k) + 176 * k) / 100;
+                        g = (g * (100 - k) + 196 * k) / 100;
+                        b = (b * (100 - k) + 208 * k) / 100;
                     }
 
                     if (bolt)
@@ -683,26 +697,31 @@ namespace Voltide.UI
         /// <summary>Mint, then cyan, then sky, across the bolt.</summary>
         private static void BoltRgb(float nx, float ny, out int r, out int g, out int b)
         {
-            // Mostly top-to-bottom, so the upper tip is mint and the lower tip is sky.
-            float t = (ny - 0.14f) / 0.70f;
-            if (t < 0f) t = 0f;
-            if (t > 1f) t = 1f;
+            // Bolt-relative height. The upper third stays mint (#A6F2C2), the
+            // middle crosses cyan (#7FE0E8), the lower tip is sky (#80C8FA).
+            float u = (ny - 0.15f) / 0.68f;
+            if (u < 0f) u = 0f;
+            if (u > 1f) u = 1f;
+            float t;
+            if (u < 0.34f) t = u / 0.34f * 0.18f;
+            else if (u < 0.58f) t = 0.18f + (u - 0.34f) / 0.24f * 0.32f;
+            else t = 0.50f + (u - 0.58f) / 0.42f * 0.50f;
             int r1 = 0xA6, g1 = 0xF2, b1 = 0xC2;
             int r2 = 0x7F, g2 = 0xE0, b2 = 0xE8;
             int r3 = 0x80, g3 = 0xC8, b3 = 0xFA;
-            if (t < 0.42f)
+            if (t < 0.5f)
             {
-                float u = t / 0.42f;
-                r = (int)(r1 + (r2 - r1) * u);
-                g = (int)(g1 + (g2 - g1) * u);
-                b = (int)(b1 + (b2 - b1) * u);
+                float k = t / 0.5f;
+                r = (int)(r1 + (r2 - r1) * k);
+                g = (int)(g1 + (g2 - g1) * k);
+                b = (int)(b1 + (b2 - b1) * k);
             }
             else
             {
-                float u = (t - 0.42f) / 0.58f;
-                r = (int)(r2 + (r3 - r2) * u);
-                g = (int)(g2 + (g3 - g2) * u);
-                b = (int)(b2 + (b3 - b2) * u);
+                float k = (t - 0.5f) / 0.5f;
+                r = (int)(r2 + (r3 - r2) * k);
+                g = (int)(g2 + (g3 - g2) * k);
+                b = (int)(b2 + (b3 - b2) * k);
             }
         }
 
@@ -764,9 +783,9 @@ namespace Voltide.UI
                         }
 
                         int o = y * stride + x * 4;
-                        // One subsample at 8× is ~4/255. Drop anything that faint so
-                        // a corner does not grow a grey dust pixel.
-                        if (pa < n * 8)
+                        // Keep the real coverage, including the two or three partial
+                        // pixels that round a 16 px corner. Only exact misses go clear.
+                        if (pa == 0)
                         {
                             buf[o] = buf[o + 1] = buf[o + 2] = buf[o + 3] = 0;
                             continue;
