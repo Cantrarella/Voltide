@@ -424,18 +424,13 @@ namespace Voltide.UI
 
         // --------------------------------------------------------------- app icon
         //
-        // Frosted near-white squircle with a mint rim and a soft top highlight.
-        // The bolt is a filled silhouette traced from the reference: wide upper
-        // parallelogram, rounded top-right tip, a notch, then a lower piece that
-        // tapers to a rounded bottom-left tip. Gradient #A8F0C0 to #7CC8F8, with
-        // a soft shadow under the fill. Pixels outside the squircle stay alpha 0.
-        // This is the exe / taskbar / Alt-Tab icon, and the tray glyph at 100%.
+        // Cool-grey frosted plate (#E9ECEF to #E3E8EE), mint outer rim plus a
+        // white inner highlight, soft shadow under a filled bolt. The bolt runs
+        // mint #A6F2C2, cyan #7FE0E8, sky #80C8FA. Drawn at 4x/8x and boxed down
+        // in premultiplied space so the corner fringe is the plate colour at a
+        // partial alpha, not a grey pixel. Outside the squircle: (0,0,0,0).
 
-        // Tray sizes only: the pale spec colours disappear on a light taskbar.
-        private static readonly Color BoltMintDeep = Color.FromArgb(255, 0x4E, 0xD6, 0x96);
-        private static readonly Color BoltCyanDeep = Color.FromArgb(255, 0x3A, 0xAE, 0xF4);
-
-        private const float AppCornerRatio = 0.23f;
+        private const float AppCornerRatio = 0.22f;
 
         // Filled outline in icon space, clockwise from the top tip. Traced from
         // the reference plate so every size shares one silhouette.
@@ -509,27 +504,22 @@ namespace Voltide.UI
         }
 
         /// <summary>
-        /// App icon bitmap, drawn at <paramref name="size"/> (never a downscale).
-        /// The glass and its alpha are written from the rounded-rect distance, so
-        /// every sample that falls outside the squircle is RGBA 0 — including the
-        /// four corners. The bolt is a round-capped stroke, so the tips stay soft.
+        /// App icon bitmap, drawn at <paramref name="size"/> (never a downscale of
+        /// a bigger icon). The plate, rim and bolt are rasterised on a 4× or 8×
+        /// grid and box-filtered in premultiplied space.
         /// </summary>
         public static Bitmap RenderAppIcon(int size)
         {
             if (size < 1) size = 1;
 
-            Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-            PaintGlass(bmp, size);
-            PaintBolt(bmp, size);
-            // The stroke is anti-aliased and can leave a faint fringe past the
-            // rim. Anything geometrically outside the squircle is cleared again.
-            ClearOutsideSquircle(bmp, size * AppCornerRatio);
-            return bmp;
-        }
+            int ss = size <= 32 ? 8 : 4;
+            int big = size * ss;
+            byte[] hi = new byte[big * big * 4];
+            PaintSupersampled(hi, big, size, ss);
 
-        private static bool SmallIcon(int size)
-        {
-            return size <= 32;
+            Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            DownsamplePremultiplied(hi, big, size, ss, bmp);
+            return bmp;
         }
 
         /// <summary>Signed distance to the rounded square. Negative is inside.</summary>
@@ -548,25 +538,202 @@ namespace Voltide.UI
             return outside + inner - radius;
         }
 
-        private static void PaintGlass(Bitmap bmp, int size)
+        // 16 and 20 are hand-set so the notch stays open and no stray pixel hangs
+        // off the lower tip. '#' is bolt. Same silhouette as the traced fill.
+        private const string Bolt16 =
+            "................" +
+            "................" +
+            ".........#......" +
+            "........##......" +
+            ".......###......" +
+            "......###......." +
+            ".....####......." +
+            "....########...." +
+            "....#######....." +
+            ".......###......" +
+            ".......###......" +
+            "......###......." +
+            "......##........" +
+            "................" +
+            "................" +
+            "................";
+
+        private const string Bolt20 =
+            "...................." +
+            "...................." +
+            "...................." +
+            "...........##......." +
+            "..........##........" +
+            ".........###........" +
+            "........####........" +
+            ".......####........." +
+            "......#########....." +
+            ".....##########....." +
+            ".....#########......" +
+            ".........####......." +
+            ".........####......." +
+            "........####........" +
+            "........###........." +
+            "........##.........." +
+            "...................." +
+            "...................." +
+            "...................." +
+            "....................";
+
+        private static void PaintSupersampled(byte[] hi, int big, int size, int ss)
         {
             float radius = size * AppCornerRatio;
-            if (radius < 1f) radius = 1f;
-            if (radius > size * 0.5f) radius = size * 0.5f;
+            float mintW = size >= 64 ? size * 0.013f : 1.05f;
+            float whiteW = size >= 64 ? size * 0.008f : (size >= 24 ? 0.9f : 0f);
+            bool hand = size == 16 || size == 20;
+            string handGrid = size == 16 ? Bolt16 : Bolt20;
 
-            bool small = SmallIcon(size);
-            int baseA = small ? 250 : 236;
-            // Near-white plate. Small sizes carry a stronger mint/blue tint so the
-            // tile still reads on a white taskbar and does not turn into a grey block.
-            Color top = small
-                ? Color.FromArgb(baseA, 214, 246, 232)
-                : Color.FromArgb(baseA, 248, 253, 251);
-            Color bot = small
-                ? Color.FromArgb(baseA, 196, 222, 246)
-                : Color.FromArgb(baseA, 232, 244, 252);
-            float rim = small ? Math.Max(1.2f, size * 0.07f) : Math.Max(1.4f, size * 0.022f);
-            float sheen = small ? 0.28f : 0.22f;
+            for (int y = 0; y < big; y++)
+            {
+                float fy = (y + 0.5f) / ss;
+                float ny = fy / size;
+                for (int x = 0; x < big; x++)
+                {
+                    float fx = (x + 0.5f) / ss;
+                    float nx = fx / size;
+                    float sd = RoundRectDistance(fx, fy, size, radius);
+                    int i = (y * big + x) * 4;
+                    if (sd > 0f)
+                    {
+                        hi[i] = hi[i + 1] = hi[i + 2] = hi[i + 3] = 0;
+                        continue;
+                    }
 
+                    float dist = -sd;
+                    int r, g, b;
+                    PlateRgb(ny, dist, mintW, whiteW, out r, out g, out b);
+
+                    bool bolt;
+                    if (hand)
+                    {
+                        int gx = (int)fx;
+                        int gy = (int)fy;
+                        if (gx < 0) gx = 0;
+                        if (gy < 0) gy = 0;
+                        if (gx >= size) gx = size - 1;
+                        if (gy >= size) gy = size - 1;
+                        bolt = handGrid[gy * size + gx] == '#';
+                    }
+                    else
+                    {
+                        bolt = PointInBolt(nx, ny);
+                    }
+
+                    // Shadow sits down-right of the bolt, on the plate only.
+                    if (!bolt && PointInBolt(nx - 0.012f, ny - 0.022f))
+                    {
+                        r = (r * 62 + 136 * 38) / 100;
+                        g = (g * 62 + 150 * 38) / 100;
+                        b = (b * 62 + 162 * 38) / 100;
+                    }
+
+                    if (bolt)
+                    {
+                        BoltRgb(nx, ny, out r, out g, out b);
+                    }
+
+                    hi[i] = (byte)b;
+                    hi[i + 1] = (byte)g;
+                    hi[i + 2] = (byte)r;
+                    hi[i + 3] = 255;
+                }
+            }
+        }
+
+        /// <summary>Cool grey body, mint outer lip, white inner lip, darker foot.</summary>
+        private static void PlateRgb(float ny, float dist, float mintW, float whiteW,
+            out int r, out int g, out int b)
+        {
+            float v = ny;
+            if (v < 0f) v = 0f;
+            if (v > 1f) v = 1f;
+            // #E9ECEF at the top, #E3E8EE at the bottom.
+            r = (int)(0xE9 + (0xE3 - 0xE9) * v);
+            g = (int)(0xEC + (0xE8 - 0xEC) * v);
+            b = (int)(0xEF + (0xEE - 0xEF) * v);
+
+            if (v > 0.62f)
+            {
+                float u = (v - 0.62f) / 0.38f;
+                // Soft inner shadow along the lower curve.
+                float k = u * (dist < mintW + whiteW + 3f ? 0.72f : 0.42f);
+                r = (int)(r + (0xC5 - r) * k);
+                g = (int)(g + (0xCC - g) * k);
+                b = (int)(b + (0xD2 - b) * k);
+            }
+
+            // Keep the outermost sliver the plate colour. The coverage fringe is
+            // then that colour at partial alpha, not a mint or grey pixel.
+            const float lip = 0.45f;
+            if (dist >= lip && dist < lip + mintW)
+            {
+                r = 0xC5; g = 0xE6; b = 0xD6;
+            }
+            else if (dist >= lip + mintW && dist < lip + mintW + whiteW)
+            {
+                r = 0xFB; g = 0xFF; b = 0xFC;
+            }
+        }
+
+        /// <summary>Mint, then cyan, then sky, across the bolt.</summary>
+        private static void BoltRgb(float nx, float ny, out int r, out int g, out int b)
+        {
+            // Mostly top-to-bottom, so the upper tip is mint and the lower tip is sky.
+            float t = (ny - 0.14f) / 0.70f;
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+            int r1 = 0xA6, g1 = 0xF2, b1 = 0xC2;
+            int r2 = 0x7F, g2 = 0xE0, b2 = 0xE8;
+            int r3 = 0x80, g3 = 0xC8, b3 = 0xFA;
+            if (t < 0.42f)
+            {
+                float u = t / 0.42f;
+                r = (int)(r1 + (r2 - r1) * u);
+                g = (int)(g1 + (g2 - g1) * u);
+                b = (int)(b1 + (b2 - b1) * u);
+            }
+            else
+            {
+                float u = (t - 0.42f) / 0.58f;
+                r = (int)(r2 + (r3 - r2) * u);
+                g = (int)(g2 + (g3 - g2) * u);
+                b = (int)(b2 + (b3 - b2) * u);
+            }
+        }
+
+        private static bool PointInBolt(float x, float y)
+        {
+            bool inside = false;
+            int n = BoltFill.Length;
+            int j = n - 1;
+            for (int i = 0; i < n; i++)
+            {
+                float yi = BoltFill[i].Y;
+                float yj = BoltFill[j].Y;
+                if ((yi > y) != (yj > y))
+                {
+                    float xi = BoltFill[i].X;
+                    float xj = BoltFill[j].X;
+                    float xint = (xj - xi) * (y - yi) / (yj - yi) + xi;
+                    if (x < xint) inside = !inside;
+                }
+                j = i;
+            }
+            return inside;
+        }
+
+        /// <summary>
+        /// Box-filter in premultiplied space, then store straight alpha so a
+        /// half-covered edge stays the plate colour at half alpha instead of grey.
+        /// </summary>
+        private static void DownsamplePremultiplied(byte[] hi, int big, int size, int ss, Bitmap bmp)
+        {
+            int n = ss * ss;
             BitmapData data = bmp.LockBits(
                 new Rectangle(0, 0, size, size),
                 ImageLockMode.WriteOnly,
@@ -575,78 +742,50 @@ namespace Voltide.UI
             {
                 int stride = data.Stride;
                 byte[] buf = new byte[stride * size];
-                const int N = 4;
-                int samples = N * N;
-
                 for (int y = 0; y < size; y++)
                 {
                     for (int x = 0; x < size; x++)
                     {
-                        int hit = 0;
-                        for (int sy = 0; sy < N; sy++)
+                        int pr = 0, pg = 0, pb = 0, pa = 0;
+                        int y0 = y * ss;
+                        int x0 = x * ss;
+                        for (int sy = 0; sy < ss; sy++)
                         {
-                            float py = y + (sy + 0.5f) / N;
-                            for (int sx = 0; sx < N; sx++)
+                            int row = (y0 + sy) * big;
+                            for (int sx = 0; sx < ss; sx++)
                             {
-                                float px = x + (sx + 0.5f) / N;
-                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
+                                int i = (row + x0 + sx) * 4;
+                                int a = hi[i + 3];
+                                pb += hi[i] * a;
+                                pg += hi[i + 1] * a;
+                                pr += hi[i + 2] * a;
+                                pa += a;
                             }
                         }
 
-                        int i = y * stride + x * 4;
-                        if (hit == 0)
+                        int o = y * stride + x * 4;
+                        // One subsample at 8× is ~4/255. Drop anything that faint so
+                        // a corner does not grow a grey dust pixel.
+                        if (pa < n * 8)
                         {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+                            buf[o] = buf[o + 1] = buf[o + 2] = buf[o + 3] = 0;
                             continue;
                         }
 
-                        float cov = hit / (float)samples;
-                        float v = (y + 0.5f) / size;
-                        int r = (int)(top.R + (bot.R - top.R) * v);
-                        int g = (int)(top.G + (bot.G - top.G) * v);
-                        int b = (int)(top.B + (bot.B - top.B) * v);
-
-                        if (v < 0.42f)
-                        {
-                            float u = (1f - v / 0.42f) * sheen;
-                            r = (int)(r + (255 - r) * u);
-                            g = (int)(g + (255 - g) * u);
-                            b = (int)(b + (255 - b) * u);
-                        }
-
-                        float sd = RoundRectDistance(x + 0.5f, y + 0.5f, size, radius);
-                        float distIn = -sd;
-                        if (distIn >= 0f && distIn < rim)
-                        {
-                            float u = 1f - distIn / rim;          // 1 at the outer edge
-                            // Mint rim just inside the edge, bright white highlight on the lip.
-                            float mint = (1f - u) * (small ? 0.55f : 0.42f);
-                            r = (int)(r + (176 - r) * mint);
-                            g = (int)(g + (236 - g) * mint);
-                            b = (int)(b + (214 - b) * mint);
-                            float lip = u * u * (small ? 0.85f : 0.7f);
-                            r = (int)(r + (255 - r) * lip);
-                            g = (int)(g + (255 - g) * lip);
-                            b = (int)(b + (255 - b) * lip);
-                        }
-
-                        int a = (int)(baseA * cov + 0.5f);
-                        if (a < 1)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                            continue;
-                        }
-                        if (a > 255) a = 255;
-                        if (r < 0) r = 0; if (r > 255) r = 255;
-                        if (g < 0) g = 0; if (g > 255) g = 255;
-                        if (b < 0) b = 0; if (b > 255) b = 255;
-                        buf[i] = (byte)b;
-                        buf[i + 1] = (byte)g;
-                        buf[i + 2] = (byte)r;
-                        buf[i + 3] = (byte)a;
+                        int A = pa / n;
+                        if (A > 255) A = 255;
+                        int R = pr / pa;
+                        int G = pg / pa;
+                        int B = pb / pa;
+                        if (R > 255) R = 255;
+                        if (G > 255) G = 255;
+                        if (B > 255) B = 255;
+                        buf[o] = (byte)B;
+                        buf[o + 1] = (byte)G;
+                        buf[o + 2] = (byte)R;
+                        buf[o + 3] = (byte)A;
                     }
                 }
-
                 Marshal.Copy(buf, 0, data.Scan0, buf.Length);
             }
             finally
@@ -655,122 +794,6 @@ namespace Voltide.UI
             }
         }
 
-        private static GraphicsPath FilledBoltPath(int size, float ox, float oy)
-        {
-            PointF[] pts = new PointF[BoltFill.Length];
-            for (int i = 0; i < BoltFill.Length; i++)
-            {
-                pts[i] = new PointF(BoltFill[i].X * size + ox, BoltFill[i].Y * size + oy);
-            }
-            GraphicsPath path = new GraphicsPath();
-            path.AddPolygon(pts);
-            return path;
-        }
-
-        private static void PaintBolt(Bitmap bmp, int size)
-        {
-            using (Graphics g = Graphics.FromImage(bmp))
-            {
-                g.SmoothingMode = SmoothingMode.HighQuality;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-                g.CompositingMode = CompositingMode.SourceOver;
-
-                // Soft shadow under the fill, down and slightly right. Several
-                // translucent copies stand in for a blur; GDI+ has no blur filter.
-                int layers = size <= 24 ? 2 : 3;
-                float step = Math.Max(0.4f, size * 0.0035f);
-                for (int i = layers; i >= 1; i--)
-                {
-                    int a = (SmallIcon(size) ? 26 : 12) * i / layers;
-                    using (GraphicsPath shadow = FilledBoltPath(size, step * i * 0.35f, step * i))
-                    using (SolidBrush shade = new SolidBrush(Color.FromArgb(a, 80, 130, 150)))
-                    {
-                        g.FillPath(shade, shadow);
-                    }
-                }
-
-                // The bolt only covers the middle of a corner-to-corner gradient, so
-                // the brush colours are pushed past the spec. What lands on the
-                // silhouette is then #A8F0C0 at the top and #7CC8F8 at the bottom.
-                Color mint = SmallIcon(size) ? BoltMintDeep : Color.FromArgb(255, 196, 255, 176);
-                Color cyan = SmallIcon(size) ? BoltCyanDeep : Color.FromArgb(255, 96, 184, 255);
-                using (GraphicsPath bolt = FilledBoltPath(size, 0f, 0f))
-                using (LinearGradientBrush brush = new LinearGradientBrush(
-                    new PointF(size * 0.30f, size * 0.16f),
-                    new PointF(size * 0.62f, size * 0.78f),
-                    mint, cyan))
-                {
-                    brush.GammaCorrection = false;
-                    g.FillPath(brush, bolt);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Forces every sample outside the squircle to transparent black.
-        /// Partial edge pixels keep their coverage; the four corners do not.
-        /// </summary>
-        private static void ClearOutsideSquircle(Bitmap bmp, float radius)
-        {
-            int size = bmp.Width;
-            if (radius < 1f) radius = 1f;
-
-            BitmapData data = bmp.LockBits(
-                new Rectangle(0, 0, size, size),
-                ImageLockMode.ReadWrite,
-                PixelFormat.Format32bppArgb);
-            try
-            {
-                int stride = data.Stride;
-                byte[] buf = new byte[stride * size];
-                Marshal.Copy(data.Scan0, buf, 0, buf.Length);
-
-                const int N = 4;
-                int samples = N * N;
-                for (int y = 0; y < size; y++)
-                {
-                    for (int x = 0; x < size; x++)
-                    {
-                        int hit = 0;
-                        for (int sy = 0; sy < N; sy++)
-                        {
-                            float py = y + (sy + 0.5f) / N;
-                            for (int sx = 0; sx < N; sx++)
-                            {
-                                float px = x + (sx + 0.5f) / N;
-                                if (RoundRectDistance(px, py, size, radius) <= 0f) hit++;
-                            }
-                        }
-
-                        int i = y * stride + x * 4;
-                        if (hit == 0)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                            continue;
-                        }
-                        if (hit == samples) continue;
-
-                        int a = buf[i + 3] * hit / samples;
-                        if (a < 1)
-                        {
-                            buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
-                        }
-                        else
-                        {
-                            buf[i + 3] = (byte)a;
-                        }
-                    }
-                }
-
-                Marshal.Copy(buf, 0, data.Scan0, buf.Length);
-            }
-            finally
-            {
-                bmp.UnlockBits(data);
-            }
-        }
 
         /// <summary>
         /// Writes the app icon as a multi-size .ico. Every size is drawn on its own
