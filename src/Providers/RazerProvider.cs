@@ -335,7 +335,7 @@ namespace Voltide.Providers
                         if (name.EndsWith(" Receiver")) name = name.Substring(0, name.Length - 9);
                         if (name.Length > 0) return name;
                     }
-                    return "PID_" + pid.ToString("X4");
+                    return "Mouse";
             }
         }
     }

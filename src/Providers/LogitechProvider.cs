@@ -63,7 +63,7 @@ namespace Voltide.Providers
             foreach (KeyValuePair<string, HidDeviceInfo> kv in candidates)
             {
                 HidDeviceInfo h = kv.Value;
-                string model = ResolveLogitechModel(h.ProductId);
+                string model = ResolveLogitechModel(h);
 
                 DeviceInfo d = new DeviceInfo();
                 d.Id = "logi-" + kv.Key;
@@ -334,11 +334,11 @@ namespace Voltide.Providers
             return sb.ToString().Trim();
         }
 
-        private static string ResolveLogitechModel(ushort pid)
+        private static string ResolveLogitechModel(HidDeviceInfo h)
         {
             // Short names: the card's model line is 13 px in the artboard and a full
             // marketing name ("G PRO X SUPERLIGHT 2") would run into the lightning.
-            switch (pid)
+            switch (h.ProductId)
             {
                 case 0xC53F: return "G304";
                 case 0xC547: return "GPW3";      // Lightspeed receiver: G Pro X Superlight 2
@@ -347,7 +347,15 @@ namespace Voltide.Providers
                 case 0xC548: return "M750M";     // Logi Bolt receiver
                 case 0xC539: return "G102";
                 case 0xC52B: return "Unifying";
-                default: return "PID_" + pid.ToString("X4");
+                default:
+                    // Fallback label: any Logitech PID we have not mapped yet.
+                    // Logitech ships far more pointing devices than keyboards, and a
+                    // generic receiver names itself "USB Receiver", so the name is the
+                    // only hint we get.
+                    string product = h.ProductName ?? "";
+                    return product.IndexOf("keyboard", StringComparison.OrdinalIgnoreCase) >= 0
+                        ? "Keyboard"
+                        : "Mouse";
             }
         }
     }

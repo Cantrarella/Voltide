@@ -55,7 +55,7 @@ namespace Voltide.Providers
                 DeviceInfo d = new DeviceInfo();
                 d.Id = "mchose-" + kv.Key;
                 d.Brand = "MCHOSE";
-                d.Model = ResolveModel(h.ProductId);
+                d.Model = ResolveModel(h);
                 d.Name = "MCHOSE " + d.Model;
                 d.Kind = DeviceKind.Keyboard;
                 d.VendorId = h.VendorId;
@@ -111,16 +111,21 @@ namespace Voltide.Providers
 
                     r.Raw = Hex(resp);
 
-                    int level = resp[5];
-                    if (level > 100) level = 100;
+                    // Validate before trusting: the receiver echoes the query frame
+                    // first, and reading that echo produced 0% readings.
+                    int level;
+                    bool charging;
+                    if (!TryParseBattery(resp, out level, out charging))
+                    {
+                        r.Error = "电量回复无效";
+                        return r;
+                    }
 
                     r.Percent = level;
                     r.Level = BatteryMath.FromPercent(level);
                     r.Online = true;
-                    r.Detail = "MCHOSE HID";
-                    // This frame has no charge bit. Keep the old "not charging"
-                    // answer so the card does not flip to unknown.
-                    r.Charging = false;
+                    r.Charging = charging;
+                    r.Detail = "2.4G";
                 }
             }
             catch (Exception ex)
@@ -138,15 +143,55 @@ namespace Voltide.Providers
             return (byte)(sum & 0xFF);
         }
 
+        /// <summary>
+        /// Accepts only a complete, checksum-valid battery reply. The echo of the query
+        /// frame carries no data (frame[4] == 0) and must be skipped, otherwise the
+        /// level field is read from the query itself and shows 0%.
+        /// </summary>
+        internal static bool TryParseBattery(byte[] frame, out int percent, out bool charging)
+        {
+            percent = 0;
+            charging = false;
+
+            if (frame == null || frame.Length != 20) return false;
+            if (frame[0] != ReportId || frame[1] != CmdBattery) return false;
+            if (frame[2] != 0x01 || frame[3] != 0 || frame[4] != 0x02) return false;
+            if (frame[19] != Checksum(frame)) return false;
+            if (frame[5] > 100) return false;
+
+            percent = frame[5];
+
+            // Little-endian bit field from the vendor spec: the low nibble is
+            // fullStatus, the high nibble is chargeStatus. Only 0/1 are confirmed.
+            int chargeStatus = frame[6] >> 4;
+            charging = chargeStatus == 1;
+            return true;
+        }
+
         private static byte[] WaitFor(HidSession s, byte rid, byte cmd, int timeoutMs)
         {
-            for (int i = 0; i < 12; i++)
+            System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+            byte[] invalid = null;
+
+            while (clock.ElapsedMilliseconds < timeoutMs)
             {
-                byte[] p = s.Read(Math.Max(60, timeoutMs / 4));
-                if (p == null) return null;
-                if (p.Length >= 6 && p[0] == rid && p[1] == cmd) return p;
+                int remaining = timeoutMs - (int)clock.ElapsedMilliseconds;
+                byte[] p = s.Read(Math.Max(1, remaining));
+                if (p == null) break;
+
+                if (p.Length < 2 || p[0] != rid || p[1] != cmd) continue;
+
+                // Query echo: the receiver repeats what we sent before answering.
+                if (p.Length == 20 && p[4] == 0 && p[19] == Checksum(p)) continue;
+
+                int percent;
+                bool charging;
+                if (TryParseBattery(p, out percent, out charging)) return p;
+
+                invalid = p;
             }
-            return null;
+
+            return invalid;
         }
 
         private static string Hex(byte[] b)
@@ -161,12 +206,29 @@ namespace Voltide.Providers
             return sb.ToString().Trim();
         }
 
-        private static string ResolveModel(ushort pid)
+        /// <summary>
+        /// Prefers the name the receiver reports, but never regresses to a generic
+        /// label: 0xFA09 keeps the known K99 v2 mapping when the product string is
+        /// just "2.4G Wireless Receiver" (GX87 and G75 Pro share that receiver).
+        /// </summary>
+        private static string ResolveModel(HidDeviceInfo device)
         {
-            switch (pid)
+            string product = device.ProductName;
+
+            if (!string.IsNullOrWhiteSpace(product) &&
+                !product.Equals("2.4G Wireless Receiver", StringComparison.OrdinalIgnoreCase))
+            {
+                if (product.StartsWith("MCHOSE ", StringComparison.OrdinalIgnoreCase))
+                    product = product.Substring(7);
+
+                product = product.Trim();
+                if (product.Length > 0) return product;
+            }
+
+            switch (device.ProductId)
             {
                 case 0xFA09: return "K99 v2";
-                default: return "PID_" + pid.ToString("X4");
+                default: return "Keyboard";
             }
         }
     }

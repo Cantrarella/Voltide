@@ -226,6 +226,9 @@ namespace Voltide.Interop
         private int _inputLen;
         private bool _closed;
 
+        /// <summary>Raw handle, needed by providers that call HidD_SetFeature directly.</summary>
+        public IntPtr Handle { get { return _handle; } }
+
         public HidSession(string path, int inputLen, int outputLen)
             : this(path, inputLen, outputLen, false)
         {
