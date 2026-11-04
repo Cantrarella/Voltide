@@ -71,7 +71,7 @@ namespace Voltide.UI
             IntPtr handle = _form.Handle;
 
             _tray = new NotifyIcon();
-            _tray.Icon = IconFactory.ToLightningIcon(32);
+            _tray.Icon = IconFactory.ToAppIcon(IconFactory.SystemSmallIconSize());
             _tray.Text = "Voltide";   // Windows tooltip on hover
             _tray.Visible = true;
             _tray.BalloonTipClosed += delegate { OnBalloonClosed(); };
@@ -546,8 +546,8 @@ namespace Voltide.UI
 
         /// <summary>
         /// Swaps the tray icon for a live battery digit: the lowest online device's
-        /// percentage, framed by a corner bracket. No device keeps the transparent
-        /// lightning glyph. 100% uses the app icon, drawn at the tray's real pixel
+        /// percentage, framed by a corner bracket. No device and full charge both
+        /// keep the app icon. 100% uses the app icon, drawn at the tray's real pixel
         /// size (16/20/24/32) so high DPI does not scale a single bitmap. Runs on
         /// the UI thread after each refresh.
         ///
@@ -574,8 +574,7 @@ namespace Voltide.UI
             _trayPercent = percent;
 
             Icon next;
-            if (percent < 0) next = IconFactory.ToLightningIcon(32);
-            else if (percent >= 100) next = IconFactory.ToAppIcon(IconFactory.SystemSmallIconSize());
+            if (percent < 0 || percent >= 100) next = IconFactory.ToAppIcon(IconFactory.SystemSmallIconSize());
             else next = IconFactory.ToBatteryIcon(percent, 32);
 
             Icon previous = _tray.Icon;
