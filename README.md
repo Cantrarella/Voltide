@@ -9,6 +9,8 @@
 
 一款轻量的 Windows 托盘工具，在一块面板中显示 2.4G 无线外设（键盘与鼠标）的电量，无需安装任何厂商软件。
 
+> **v2.3.1**：图标配色重置——底板改为应用原版主题深紫渐变，闪电保持不变。详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+>
 > **v2.3.0**：合并上游 v2.1.4——新增 MCHOSE K7/A5 鼠标与 TAIDU 钛度三个适配器；修复迈丛接收器回显导致 0% 误读；设备名回退从 `PID_XXXX` 改为友好名。详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 >
 > **本 Fork 更新说明（v2.2.0）**
